@@ -2101,6 +2101,7 @@ def _parse_generated_md_to_meta(
     paper_id: str,
     section: str,
     selection_source: str = "",
+    paper_abstract: str = "",
 ) -> Dict[str, Any]:
     """
     从 Step6 已生成的论文 Markdown 中提取可导出的元信息（不引入额外 LLM 调用）。
@@ -2178,7 +2179,15 @@ def _parse_generated_md_to_meta(
                 kind = "query"
             tags_typed.append({"kind": kind, "label": label})
 
-    abstract_en = _extract_md_section(text, "Abstract")
+    parsed_abstract_en = _extract_md_section(text, "Abstract")
+    abstract_en = str(paper_abstract or "").strip()
+    if not abstract_en:
+        abstract_en = parsed_abstract_en
+    if not abstract_en and "## Abstract" in text:
+        # 兜底：md 有 Abstract 标题但抽取文本为空
+        abstract_en = parsed_abstract_en
+    if not abstract_en:
+        abstract_en = "arXiv did not provide an abstract for this paper."
 
     # 作者：front matter authors 优先，次选旧式 meta 行
     raw_authors = fm_meta.get("authors") if "authors" in fm_meta else fm_meta.get("Authors")
@@ -2267,6 +2276,7 @@ def write_day_meta_index_json(
                     pid,
                     section,
                     str(paper.get("selection_source") or ""),
+                    str(paper.get("abstract") or ""),
                 )
                 papers.append(item)
             except Exception as e:
