@@ -1,16 +1,56 @@
 {
   "mode": "standard",
-  "generated_at": "2026-04-09T05:23:43.872185+00:00",
+  "generated_at": "2026-04-09T05:37:17.427229+00:00",
   "stats": {
     "mode": "standard",
-    "tag_count": 0,
+    "tag_count": 1,
     "deep_divecandidates": 0,
-    "deep_cap": null,
+    "deep_cap": 6,
     "deep_selected": 0,
-    "quick_candidates": 0,
-    "quick_skim_target": 10,
-    "quick_selected": 0
+    "quick_candidates": 1,
+    "quick_skim_target": 11,
+    "quick_selected": 1
   },
   "deep_dive": [],
-  "quick_skim": []
+  "quick_skim": [
+    {
+      "id": "2604.02655v1",
+      "source": "arxiv",
+      "title": "Semantic Data Processing with Holistic Data Understanding",
+      "abstract": "Semantic operators have increasingly become integrated within data systems to enable processing data using Large Language Models (LLMs). Despite significant recent effort in improving these operators, their accuracy is limited due to a critical flaw in their implementation: lack of holistic data understanding. In existing systems, semantic operators often process each data record independently using an LLM, without considering data context, only leveraging LLM's dataset-agnostic interpretation of the user-provided task. However, natural language is imprecise, so a task can only be accurately performed if it is correctly interpreted in the context of the dataset. For example, for classification and scoring tasks, which are typical semantic map tasks, the standard method of processing each record row by row yields inaccurate results in a wide range of datasets. We propose HoldUp, a new method for semantic data processing with holistic data understanding. HoldUp processes records jointly, leveraging cross-record relationships to correctly interpret the task within the data context. Enabling holistic data understanding, however, is challenging due to what we call LLM data understanding paradox: while large representative data subsets are necessary to provide context, feeding long inputs to LLMs causes quality degradation due to well-known long-context issues. To resolve this paradox, we develop a novel clustering algorithm to identify the latent structure within the dataset through judicious use of LLMs, inspired by bagging. Using this approach as a primitive, we develop novel clustering-based classification and scoring methods to perform these two tasks with high accuracy. Experiments across 15 real-world datasets show that HoldUp consistently outperforms existing solutions, providing up to 33% higher accuracy for classification and 30% higher accuracy for scoring and clustering tasks.",
+      "authors": [
+        "Youran Sun",
+        "Sepanta Zeighami",
+        "Bhavya Chopra",
+        "Shreya Shankar",
+        "Aditya G. Parameswaran"
+      ],
+      "primary_category": "cs.DB",
+      "categories": [
+        "cs.DB"
+      ],
+      "published": "2026-04-03T02:37:06+00:00",
+      "link": "https://arxiv.org/pdf/2604.02655v1",
+      "tags": [
+        "keyword:SentA",
+        "query:SentA"
+      ],
+      "llm_score": 6.0,
+      "llm_evidence_en": "semantic operators for classification and scoring tasks",
+      "llm_evidence_cn": "用于分类和评分任务的语义算子",
+      "llm_evidence": "用于分类和评分任务的语义算子",
+      "canonical_evidence": "用于分类和评分任务的语义算子",
+      "llm_tldr_en": "Improves semantic classification and scoring accuracy through holistic data understanding.",
+      "llm_tldr_cn": "通过整体数据理解提高语义分类和评分任务的准确性。",
+      "llm_tldr": "通过整体数据理解提高语义分类和评分任务的准确性。",
+      "llm_tags": [
+        "query:senta"
+      ],
+      "matched_query_tag": "query:senta",
+      "matched_query_text": "如何从文本中准确识别和分类情感",
+      "matched_requirement_id": "req-2",
+      "selection_source": "fresh_fetch",
+      "quick_tier": "6"
+    }
+  ]
 }
