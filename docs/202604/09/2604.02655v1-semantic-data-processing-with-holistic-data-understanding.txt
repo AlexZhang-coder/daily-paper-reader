@@ -1,0 +1,1085 @@
+Title: Semantic Data Processing with Holistic Data Understanding
+
+URL Source: https://arxiv.org/pdf/2604.02655v1
+
+Published Time: Mon, 06 Apr 2026 00:24:56 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# Semantic Data Processing with Holistic Data Understanding 
+
+# Youran Sun †, Sepanta Zeighami †, Bhavya Chopra, Shreya Shankar, Aditya G. Parameswaran 
+
+UC Berkeley {youransun,zeighami,bhavyachopra,shreyashankar,adityagp} @berkeley.edu, 
+
+## ABSTRACT 
+
+Semantic operators have increasingly become integrated within data systems to enable processing data using Large Language Mod-els (LLMs). Despite significant recent effort in improving these operators, their accuracy is limited due to a critical flaw in their im-plementation: lack of holistic data understanding . In existing systems, semantic operators often process each data record independently using an LLM, without considering data context, only leveraging LLM’s dataset-agnostic interpretation of the user-provided task. However, natural language is imprecise, so a task can only be ac-curately performed if it is correctly interpreted in the context of the dataset. For example, for classification and scoring tasks, which are typical semantic map tasks, the standard method of processing each record row by row yields inaccurate results in a wide range of datasets. We propose HoldUp , a new method for semantic data processing with holistic data understanding. HoldUp processes records jointly, leveraging cross-record relationships to correctly interpret the task within the data context. Enabling holistic data understanding, however, is challenging due to what we call LLM data understanding paradox : while large representative data sub-sets are necessary to provide context, feeding long inputs to LLMs causes quality degradation due to well-known long-context issues. To resolve this paradox, we develop a novel clustering algorithm to identify the latent structure within the dataset through judicious use of LLMs, inspired by bagging. Using this approach as a primi-tive, we develop novel clustering-based classification and scoring methods to perform these two tasks with high accuracy. Experi-ments across 15 real-world datasets show that HoldUp consistently outperforms existing solutions, providing up to 33% higher ac-curacy for classification and 30% higher accuracy for scoring and clustering tasks. 
+
+## 1 INTRODUCTION 
+
+Many data systems [ 13 , 16 , 36 , 44 , 51 , 54 , 67 ] now support semantic operators that enable text data processing based on a user-specified natural language (NL) instruction using Large Language Models (LLMs). For example, a semantic map applies an LLM-powered map operation to all record in a dataset based on an NL user instruction. 
+
+Lack of Holistic Data Understanding . Despite significant re-cent effort in improving semantic operators [ 13 , 16 , 36 , 44 , 51 , 54 ,67 ], for many tasks the accuracy of semantic operators is limited due to a critical flaw in their implementation: lack of holistic data understanding . Consider semantic maps, for example. Exist-ing systems perform semantic map tasks by processing each record independently [ 44 , 47 , 51 ], without considering the task in the con-text of the rest of the dataset, similar to how a relational map would have been performed on a dataset. However, treating semantic oper-ations similar to relational ones ignores the fact that specification 
+
+> †Co-first author.
+
+Figure 1: Classification example where correct label changes based on data context 
+
+in natural language is imprecise by nature, so a task can only be accurately performed if it is correctly interpreted in the context of the dataset . Indeed, the importance of context when performing semantic tasks is well-established: humans (sometimes subconsciously) take overall context into account when making individual judgments [ 6, 21 , 41 , 78 ], as observed in crowdsourc-ing [ 40 , 48 , 79 , 80 ], and in the social sciences [ 49 , 50 , 58 , 59 ]. We show that context matters for semantic data processing as well. For ease of exposition, we focus on classification and scoring, both typical map operations; we discuss other operations later. Both these tasks require assigning a label from a given set to each record in a dataset, class names in the former case and numerical scores in the latter. Existing systems’ [ 44 , 47 , 51 ] lack of holistic data understanding causes errors when the correct dataset-dependent interpretation of a task differs from LLM’s dataset-agnostic one. Fig. 1 shows an example task of classifying support tickets for an e-commerce website based on urgency in two different datasets, where record 3○ is shared across datasets, but each dataset addi-tionally contains other records. In the context of Dataset 1, record 3○ would be considered an urgent issue, as it critically impacts functionality of the website, while other records are non-critical maintenance issues. Meanwhile, in the context of Dataset 2, record 3○ would be considered a non-urgent issue compared with other records that correspond to serious software and security issues. LLMs’ lack of holistic data understanding frequently causes er-rors in practice. Table 1a shows a summary of our empirical results when performing classification and scoring tasks independently and row-by-row (Table 1a first row), showing average accuracy across 10 real-world datasets for classification and 5 real-world datasets for scoring. Our results show less than 50% accuracy for scoring tasks and less than 70% accuracy for classification tasks when processing data without holistic data understanding, using top-of-the-line LLMs. 
+
+LLM Data Understanding Paradox. Enabling holistic data un-derstanding for semantic operators is challenging due to what we call LLM data understanding paradox: to enable LLMs to un-derstand the dataset, we need to provide large enough subsets of the dataset to the LLMs; however, providing large subsets of the data to an LLM worsens LLM quality as it increases input size, leading to well-known long-context issues [ 4 , 37 , 64 ]. Because of this paradox, approaches that simply provide additional data subsets to the LLM as context during processing do not improve accuracy. 
+
+> arXiv:2604.02655v1 [cs.DB] 3 Apr 2026
+
+Figure 2: HoldUp workflow for multi-class classification 
+
+Table 1a rows 2-3 show that neither batching records together so LLM observes other records as context when making predictions (called Batch), nor asking an LLM to design a rubric, based on a data subset, to add to the prompt to provide data-dependent guidelines for the task (called Rubric) improve the accuracy over independent row-by-row LLM calls on average. 
+
+HoldUp . We propose HoldUp , Hol istic D ata U nderstanding for Semantic Data P rocessing, a novel method that enables LLMs to holistically understand the dataset during semantic data process-ing, ensuring tasks are appropriately interpreted based on over-all dataset context. Even for tasks specified as semantic maps, in-stead of processing records one by one, HoldUp jointly processes records while considering cross-record dependencies. We next dis-cuss HoldUp for classification and scoring before other tasks. 
+
+Classification and Scoring with HoldUp . Our key insight to enable holistic data understanding is to turn row-by-row classifi-cation into what we call clustering-based classification . Clustering provides a natural way to identify related records and assign them to similar labels by holistically considering cross-record relation-ships. Unfortunately, this approach as specified does not work. First, accurately clustering the records is itself difficult, again due to the LLM data understanding paradox—simply asking an LLM to per-form clustering on the dataset has low accuracy. Second, even if we accurately identify the clusters, deciding which label each cluster represents is challenging, especially when there are many similar classes. Finally, cost can be an issue: clustering requires considering cross-record relationships which can be costly. We present novel clustering-based classification and scoring solutions that addresses these three challenges, discussed next. 
+
+Clustering. HoldUp clusters records into groups that belong to the same label. As mentioned earlier, doing so accurately is challenging because it requires reasoning about which records belong to the same label, based on the task instruction and the dataset. Simply using embedding-based clustering (e.g., using K-means on record embeddings) fails because it does not take the task instruction into account and because embeddings do not provide a fine-grained representation of the data. Meanwhile, using LLMs to perform clustering runs into the LLM data understanding paradox: it requires providing a large enough data subset to an LLM, which yields inaccurate results due to long context issues. We propose a novel clustering algorithm that addresses these challenges by (1) using LLMs only for sub-tasks within clustering that they can perform accurately, and (2) developing novel methods to obtain accurate responses from LLMs to resolve the LLM data understanding paradox. We propose a graph-based clustering ap-proach, where we construct a graph with nodes as records and edge weights as the probability of two records having different labels, estimated by an LLM. To accurately estimate this probability for two records, inspired by bagging [ 7], we repeatedly provide the records together with random subsets of the dataset to an LLM and                                         
+
+> Classification Scoring Method Avg. acc. Max. ΔAvg. acc. Max. Δ
+> Row by Row 0.66 ↑0.33 0.48 ↑0.28
+> Batch 0.43 ↑0.57 0.46 ↑0.33
+> Rubric 0.59 ↑0.36 0.50 ↑0.29
+> HoldUp 0.80 -0.64 -
+> (a) Classification and scoring results. Method Avg. acc. Max. Δ
+> K-means+ Embed. 0.45 ↑0.37
+> Lotus 0.50 ↑0.30
+> HoldUp 0.70 -
+> (b) Clustering results.
+
+Table 1: Summary of HoldUp ’s performance across tasks. Avg. acc. is average accuracy and Max. Δ shows HoldUp ’s maximum accuracy improvement across all datasets in Sec. 6. 
+
+ask it to output whether the records should belong to the same class, averaging the output across samples—repeated sampling improves accuracy of probability estimation while additional data context ensures estimates are informed by the dataset as whole. We then use correlation clustering [ 5, 14 ] to cluster this graph. Fig. 2 (b) shows an example, where edge weights are obtained using an LLM. 
+
+Cluster Assignment. HoldUp then assigns each cluster to a label. This step also requires jointly considering all clusters, especially when there are many clusters. Simply asking an LLM to indepen-dently assign a label to each cluster causes errors for similar reasons as when labeling each record. Without a holistic understanding of all clusters, the LLM cannot interpret the task within the data con-text, while providing additional clusters as context yield inaccurate results due to the LLM data understanding paradox. To accurately assign labels to clusters, we use insights similar to our clustering algorithm, where we (1) jointly perform cluster assignment across clusters to take cross-cluster dependencies into account, (2) use LLMs for sub-tasks within cluster assignment that they can perform accurately, and, differently from our clustering algorithm, (3) additionally utilize task-specific characteristics to improve accuracy. For classification, we construct a bipartite graph between clusters and class names, where each edge weight reflects the probability—determined by an LLM—that a given cluster cor-responds to a given class. We then compute a maximum-weight perfect matching to assign a unique label to each cluster. Fig. 2 shows an example of this bipartite graph and the cluster assign-ment output. For scoring, we exploit the ordinal nature of scores to ensure accurate label assignment. Specifically, we use LLMs to de-cide pairwise orders between clusters—i.e., whether a cluster should be scored higher than another. We use these pairwise comparisons to sort the clusters while minimizing the number of pairwise rela-tionships violated using an Integer Linear Program and assign a score to each cluster based on this ordering. 
+
+Cost Optimizations . Finally, our clustering algorithm can be expensive—it requires obtaining probabilities of whether every pair of records belong to the same class. We propose multiple optimiza-tions to reduce the overall cost. First, we only use our clustering al-gorithm for records that are difficult to label. Unambiguous records whose label can be accurately determined without data context are labeled through row-by-row processing—we use a model cascade approach [ 44 , 73 ] to decide how each record should be processed. Second, for records processed with our clustering-based method, we perform clustering in constant size batches, which ensures cost 
+
+> 2
+
+remains linear in data size. Finally, we use a statistical model to de-cide how many samples are needed for accurate clustering, avoiding unnecessary LLM calls. 
+
+Other tasks with HoldUp . Our clustering algorithm can be used to perform clustering tasks as well, and semantic filter and joins are binary classification tasks (the latter on the cross product of two datasets), so that our classification algorithm is applicable to those tasks. We believe our insights are also applicable to open-ended map operations (e.g., extraction and summarization), where holistic data understanding can improve task interpretation as well as consistency of outputs across records—we leave a more detailed study to future work. 
+
+Contributions . Our contributions are as follows: 
+
+• We show that an important subset of real-world tasks require holistic data understanding and are not well-supported by existing semantic operator implementations, 
+
+• We propose a novel operator, HoldUp , that performs classifi-cation, scoring and clustering with high accuracy, 
+
+• We develop a novel clustering algorithm and clustering-based classification and scoring methods; and 
+
+• We present extensive experimental results on 15 real-world datasets, showing HoldUp outperforms existing solutions, providing on average 14% and up to 33% higher accuracy for classification across datasets and up to 30% for scoring and clustering with comparable costs. 
+
+## 2 BACKGROUND AND OVERVIEW 
+
+Our goal is to accurately perform semantic data processing by holistically understanding the dataset. For ease of presentation, we first present our approach for classification, a common use-case for semantic data processing [ 44 , 47 , 51 , 73 ], which includes filtering as a special case. We formalize the classification problem in Sec. 2.1, and overview our solution in Sec. 2.2, with details presented in Secs. 3-4. We present extensions to other tasks, including scoring, clustering and joins in Sec. 5. 
+
+## 2.1 Classification Setup and Background 
+
+Classification Task . We are given a dataset, D, containing 𝑛 
+
+records, a natural language statement P specifying the classification instruction (e.g., “assign a topic to the news article” for a dataset 
+
+D of news articles) and a set of 𝑘 class names 𝐿 = {ℓ1, ℓ 2, · · · , ℓ 𝑘 }
+
+(e.g., “world news”, “sports”). The goal is to return a prediction set 
+
+ˆ𝑌 = { ˆ𝑦 1, ˆ𝑦 2, · · · , ˆ𝑦 𝑛 }, where ˆ𝑦 𝑖 ∈ 𝐿 is the predicted class for the 
+
+𝑖 -record in D, with high classification accuracy , A, defined as 
+
+A ( 𝑌, ˆ𝑌 ) = 1
+
+𝑛 
+
+> 𝑛
+
+∑︁ 
+
+> 𝑖 =1
+
+I[ ˆ𝑦 𝑖 = 𝑦 𝑖 ], (1) where 𝑌 = {𝑦 1, 𝑦 2, · · · , 𝑦 𝑛 } and 𝑦 𝑖 is the ground-truth class for the 
+
+𝑖 -th record in D, 𝑖 ∈ [ 𝑛 ].
+
+LLMs . We predict the class records belong to using LLMs. We use M ( 𝑥 ) to denote an LLM call with input 𝑥 and M ( 𝑥 1, ..., 𝑥 𝑘 ) to refer to an LLM call with a prompt containing a concatenation of 
+
+𝑥 1, ..., 𝑥 𝑘 . For an LLM call, M ( 𝑥 ), we obtain the model’s confidence in its output by 𝒮 M (𝑥 ), obtained from model log probabilities. We assume access to two different LLMs, a cheaper and potentially less accurate LLM M𝑐 , and a more expensive but more accurate LLM, 
+
+Figure 3: Classification with HoldUp 
+
+M𝑒 ; M ( 𝑥 ) generically specifies an LLM call implemented with either M𝑒 or M𝑐 (our techniques can be extended to additional LLMs but we focus here on two for ease of exposition). We use the cheaper model to reduce cost when possible, using a model cascade framework, discussed next. 
+
+Model Cascade. Similar to prior work [ 44 , 73 ] we use model cascades to reduce cost, where for each record, we choose between using a cheap but inaccurate method, called a proxy , or an expensive but accurate method, called an oracle , to process the record. We route records to proxies in order to reduce cost when possible while providing accuracy similar to that of the oracle. The decision of whether to use a proxy for a record is often based on proxy’s confidence score (e.g., obtained from model log-probabilities). A proxy is used to process a record if it’s confidence for that record is above a threshold. The threshold is determined upfront through comparing proxy and oracle responses on a sample [44, 73]. 
+
+Cost Model . We measure the cost of performing classification as the monetary cost of using LLMs; computational cost of non-LLM components is negligible. For an algorithm, 𝐴𝑙𝑔 , we denote by 
+
+cost (𝐴𝑙𝑔 ) the total monetary costs it incurs by using M𝑒 and M𝑐 .
+
+Problem Definition . Our goal is to perform classification with high accuracy given a monetary budget eC (with eC = ∞ denoting no budget limit), that is, to design an algorithm, 𝐴𝑙𝑔 (D , P, 𝐿 ), that given a dataset D, classification instruction P, and class names 𝐿 ,satisfies cost (𝐴𝑙𝑔 (D , P, 𝐿 )) ≤ eC, and returns a prediction set ˆ𝑦 
+
+with maximum classification accuracy. 
+
+Existing Solutions. To solve the classification problem, existing data systems use a semantic map operator [ 13 , 16 , 36 , 44 , 51 , 54 ,67 ], by calling an LLM independently on every row to perform classification. Specifically, M ( P, 𝑡 ) is invoked for every 𝑡 ∈ D 
+
+independently, generating the prediction set ˆ𝑌 = {M ( P, 𝑡 ); 𝑡 ∈ D} ,where M ( P, 𝑡 ) denotes providing the instruction P and a tuple 
+
+𝑡 ∈ D to an LLM and asking it to perform classification. To decide which model, M𝑒 or M𝑐 , should be used to implement the LLM call 
+
+M, some approaches leverage a model cascade solution [ 44 , 73 ] to reduce cost, but still apply each model independently to each row. Such an approach yields inaccurate results when classification re-quires interpreting the task based on the dataset context. In practice, class boundaries often overlap and the correct class for a record depends on other records. Processing every record row-by-row ignores such dependencies, leading to poor accuracy. 
+
+## 2.2 Classification with HoldUp 
+
+The key insight in HoldUp is that the correct interpretation of the classification task and class names depends on all the records in the dataset. Thus, rather than performing classification indepen-dently for each record, HoldUp processes records together while holistically considering cross-record relationships. 
+
+> 3
+
+Algorithm 1: HoldUp classification (D , P, 𝑘, 𝐿 )                                                                                                              
+
+> Input :Dataset D, task prompt P, integer 𝑘 , class labels 𝐿
+> Output : Predicted classes for records in D
+> ⊲1○Clustering-based classification on a sample batch 𝐷 0
+> 1𝐷 0←a sample batch from D;
+> 2ˆ𝑌 𝐷 0,C0←CbClassification (𝐷 0,P, 𝑘, 𝐿 );
+> ⊲2○Model cascade with row-by-row processing
+> 3ˆ𝑌 𝐷 𝑅 , 𝐷 𝑅 ←PredictWithCascade ( D ,P, 𝑘, 𝐿, 𝐷 0,C0)
+> ⊲3○Clustering-based classification in batches
+> 4𝐷 𝑋 , 1,· · · , 𝐷 𝑋 ,𝑛 𝐵 ←batches from D \ 𝐷 0\𝐷 𝑅 ;
+> 5ˆ𝑌 ←ˆ𝑌 𝐷 0∪ˆ𝑌 𝐷 𝑅
+> 6for 𝑖 ←1to 𝑛 𝐵 do
+> 7ˆ𝑌 𝐷 𝑋 ,𝑖 ,C𝑋 ,𝑖 ←CbClassification (𝐷 𝑋 ,𝑖 ,P, 𝑘, 𝐿 );
+> 8ˆ𝑌 ←ˆ𝑌 ∪ˆ𝑌 𝑋 ,𝑖 ;
+> 9return ˆ𝑌
+> 10 Function CbClassification (𝐷, P, 𝑘, 𝐿 )
+> Input :Dataset 𝐷 , task prompt P, integer 𝑘 , labels 𝐿
+> Output : Predicted classes for records in 𝐷
+> 11 ˆ𝐶 ←Cluster (𝐷, P, 𝑘 );⊲ˆ𝐶 ={ˆ𝐶 1,ˆ𝐶 2,· · · ,ˆ𝐶 𝑘 }
+> 12 ˆ𝑌 ←Assign (ˆ𝐶, P, 𝑘, 𝐿 );
+> 13 C ← total cost of Cluster and Assign ;
+> 14 return ˆ𝑌 𝐷 ,C
+
+Overview . HoldUp uses a novel clustering-based classification 
+
+approach: this approach first clusters records to identify which ones should belong to the same class, then assigns classes to each cluster. The clustering step holistically considers cross-record re-lationships, enabling this approach to achieve high classification accuracy. However, clustering-based classification can be expen-sive, as it requires iterating over the data multiple times to evaluate which records should belong to the same class. On the other hand, row-by-row classification, as used by existing systems has low cost but can be inaccurate. To ensure HoldUp stays within the user’s monetary budget, we combine both approaches following a model cascades-like framework, using clustering-based classification (as “oracle”) on smaller subsets of the data that are difficult to classify, while using row-by-row classification (as “proxy”) for the rest. Fig. 3 illustrates HoldUp at a high level. 1○ Initial clustering-based classification. we sample a subset of the data, cluster these records and assign a class name to each cluster. 2○ Clustering-informed row-by-row classification for easy cases. We then use model cascades to decide a subset of the remaining records that can be processed using row-by-row classification, considering our clustering-based approach as the oracle and row-by-row classifica-tion with different models as proxies. We obtain LLM confidence scores for row-by-row classification and decide a threshold on the score based on cost-accuracy trade-offs from Step 1○ and the cost budget e𝐶 ; records with score above this threshold are processed via row-by-row classification. 3○ Clustering-based classification for hard cases. For the rest of the data, we use our clustering-based method to perform classification. We perform clustering in constant-size batches to avoid a quadratic number of LLM calls, applying clustering-based classification independently to each batch that yields cost linear in data size. 
+
+Algorithm . Algorithm 1 presents this process. We first sample a batch 𝐷 0 from D (line 1) and apply our clustering-based clas-sification method, CbClassification , to 𝐷 0. The algorithm first partitions the records in 𝐷 0 into 𝑘 clusters based on which records are expected to belong to the same class, and then assigns each cluster to a distinct ground-truth class name (defined in Sec. 3), obtaining classification result ˆ𝑌 𝐷 0 as well as classification cost C0
+
+(line 2). Then, we use our cascade approach PredictWithCascade 
+
+(defined in Sec. 4), which classifies a subset 𝐷 𝑅 of D using row-by-row classification (line 3). Finally, the remaining records are partitioned into batches (line 4), and each batch is independently classified using the clustering-based method (lines 5-8), again ap-plying CbClassification .
+
+Roadmap . We discuss how we perform clustering-based classi-fication, CbClassification , in Sec. 3 and present details of how we use a model cascade approach to stay within the budgetary constraint, PredictWithCascade , in Sec. 4. Finally, Sec. 5 shows how the approach can be extended to other tasks. 
+
+## 3 CLUSTERING-BASED CLASSIFICATION 
+
+Next, we discuss CbClassification , our clustering-based classi-fication method that classifies a given set of data using clustering to enable holistic dataset understanding. Given an input dataset 
+
+𝐷 ⊆ D (e.g., in step 1○ of Alg. 1, 𝐷 is set to 𝐷 0), as shown in Alg 1, 
+
+CbClassification first clusters records in 𝐷 into a set of 𝑘 clusters according to the classification instruction P (line 11, Alg 1) and then maps each cluster to a class name via bipartite matching (line 12, Alg 1). Without loss of generality, we let 𝐷 = {𝑡 1, ..., 𝑡 𝐵 } ⊆ D for an integer 𝐵 = |𝐷 |. We discuss the clustering and cluster assignment steps in Secs. 3.1 and 3.2, respectively. 
+
+## 3.1 Clustering Algorithm 
+
+Identifying accurate clusters of records that should belong to the same class at low cost is challenging. Naively clustering records us-ing embeddings (e.g., by running K-means) yields inaccurate results because embeddings (1) don’t provide a fine-grained representa-tion of the data, and (2) don’t take P, the classification instruction, into account causing errors when semantically dissimilar records can belong to the same classes (e.g., vastly different articles about “African history” and “global warming” may both be classified as “world news”). Meanwhile, providing many data records to an LLM to cluster yields inaccurate results due to the LLM data understand-ing paradox : (1) to obtain accurate answers we must provide a large subset of the data to the LLM, but (2) the LLM’s accuracy degrades as more data is provided as input. In the case of clustering, a small data sample may not contain enough representative records to al-low for accurate clustering, while providing more records leads to a longer input that LLMs are less accurate at processing [ 4, 37 , 64 ]. 
+
+Overview. We develop a novel clustering method that addresses these shortcomings by (1) using LLMs only for subtasks they can perform accurately, rather than the clustering task itself, and (2) developing novel methods to obtain accurate responses from LLMs on large datasets to resolve the LLM data understanding paradox. We specifically propose a graph-based clustering approach to solve the problem. We represent the input dataset 𝐷 , with a weighted complete graph 𝐺 = (𝐷, 𝐸,𝑊 ), where each vertex is a record in 𝐷 ,
+
+𝐸 is the set of all record pairs (since 𝐺 is a complete graph) and 
+
+𝑊 is a weight matrix where 𝑊 [𝑖, 𝑗 ] is the edge weight between the 𝑖 -th and 𝑗 -th record. We use 𝑊 [𝑖, 𝑗 ] to denote the probability that the records 𝑡 𝑖 and 𝑡 𝑗 belong to different classes based on the classification instruction P. Our goal is to partition 𝐺 into 𝑘 clusters, 
+
+ˆ𝐶 1, ..., ˆ𝐶 𝑘 such that all records in ˆ𝐶 𝑖 belong to the same class. 
+
+> 4
+
+Algorithm 2: Cluster (𝐷, P, 𝑘 )                                            
+
+> Input :Dataset 𝐷 , task prompt P, an integer 𝑘
+> Output : Clustering of 𝐷
+> 1𝑚 ←0;should_terminate =False ,𝐶 +, 𝐶 −←0;
+> 2while not should_terminate and 𝑚 <𝑚 max do
+> 3𝑚 ←𝑚 +1;
+> 4𝑊 , 𝐶 +, 𝐶 −←UpdateEdgeWeights (𝐷, P, 𝐶 +, 𝐶 −, 𝑚 );
+> 5ˆ𝐶, should_terminate ←cluster 𝐷 using 𝑊 , decide termination;
+> 6return ˆ𝐶 ;
+
+This formulation reduces the clustering problem to one of ac-curately identifying the probability that two records belong to the same class. If we can identify the edge weights accurately, clustering the records is simple and can be done using any graph clustering method (we use correlation clustering [ 5 , 14 ]). For example, if we know the ground-truth classes, 𝑦 𝑖 for all 𝑖 ∈ [| 𝐷 |] , we can let 
+
+𝑊 [𝑖, 𝑗 ] = I[𝑦 𝑖 ≠ 𝑦 𝑗 ] and trivially cluster 𝐺 by taking components that are connected with 0-weight edges. Nonetheless, obtaining accurate edge weights remains challenging. Similar to the origi-nal classification problem, whether two records should belong to different classes still requires holistic data understanding, which again leads to the LLM data understanding paradox, now, because to accurately decide whether two records belong to different classes we must provide additional data as context to the LLM, but LLM accuracy degrades as it is provided with more data. We propose a bagging-inspired [ 7] approach to resolve this para-dox. To obtain edge weights for a batch of data 𝐷 ⊆ D , we repeat-edly provide subsets of this batch to the LLM to identify which records should belong to the same class. We aggregate LLM re-sponses across the subsets to decide the probability that two records belong to a different class, which are then used as edge weights. We use this approach to obtain edge weights and cluster the data, doing so iteratively while alternating between obtaining edge weights and clustering. Specifically, our clustering algorithm iter-ates between (1) querying the LLM on a new sample to refine edge weights (discussed in Sec. 3.1.1) and (2) clustering the data based on current edge weights (discussed in Sec. 3.1.2). We terminate when the clustering result stabilizes, i.e., is expected not to change with additional samples, formalized in Sec. 3.1.2. 
+
+Algorithm. Alg. 2 shows this process. We iteratively refine edge weights by taking new samples (line 4), then apply correlation clustering and decide whether to terminate (line 5). The algorithm terminates if we decide clusters have stabilized (i.e., further edge weight refinement will not impact the clustering outcome) or if we reach a maximum number of iterations 𝑚 max (line 2). We discuss 
+
+UpdateEdgeWeights which computes the edge weights in Sec. 3.1.1 and the correlation clustering and termination decision in Sec. 3.1.2. 
+
+3.1.1 Computing Edge Weights. Here, we discuss how to compute the edge weights for record pairs (𝑠, 𝑡 ) ∈ 𝐸 . A straightforward approach is to use an LLM to estimate the probability that 𝑠 and 𝑡 
+
+belong to different classes, independently for each pair. However, this strategy provides no dataset context to the LLM and yields poor estimates. 
+
+Overview . As mentioned earlier, to enable better holistic dataset understanding while providing high quality results, we use a bagging-like approach [ 7]. We iteratively query an LLM whether the pair 
+
+(𝑠, 𝑡 ) belongs to the same class, but to provide data context, at the 
+
+𝑖 -th iteration, provide the LLM with an additional subset of the data 
+
+Figure 4: Cluster algorithm example. 
+
+𝑆 𝑖 ⊆ 𝐷 , sampled uniformly at random from 𝐷 . We then average LLM answer across these calls as the edge weight. However, this approach is expensive since it requires 𝑂 (| 𝐷 |2) LLM calls across pairs, each costing 𝑂 (| 𝑆 𝑖 |) recoreds due to the additional data input for each call. To reduce cost, instead of querying the LLM for only (𝑠, 𝑡 ), we ask the LLM to output all pairs in 𝑆 𝑖 that should belong to the same class, obtaining labels for multiple edges per LLM call. In this step, in addition to the pairs the LLM directly outputs, we also include pairs that are implied by transitivity based on LLM output (e.g., if LLM outputs 𝑡 𝑎 and 𝑡 𝑏 , and 𝑡 𝑏 and 𝑡 𝑐 belong to the same class, we also assume 𝑡 𝑎 and 𝑡 𝑐 belong to the same class). We use the pairs in transitive closure of LLM output to compute edge weights. 
+
+Algorithm . At the 𝑖 -th iteration, the LLM is given a set 𝑆 𝑖 ⊂ 𝐷 
+
+and asked to determine which pairs of records in 𝑆 𝑖 belong to the same class. We let 𝑃 𝑖 ⊆ 𝑆 𝑖 × 𝑆 𝑖 the set of pairs output by the LLM and let ¯𝑃 𝑖 be its transitive closure. ¯𝑃 𝑖 is the set of positive annotations , i.e., pairs that should belong to the same class. We denote by ¯𝑁 𝑖 = 𝑆 𝑖 × 𝑆 𝑖 \ ¯𝑃 𝑖 the rest of the pairs, i.e., the set of 
+
+negative annotations that shouldn’t belong to the same class. After each iteration, we calculate the edge weights, 𝑊 , as the frequency of negative annotations for each record pair. We calculate edge weights iteratively, after computing negative and positive annotations at the 𝑖 -th iteration. Specifically, for 𝑎, 𝑏 ∈[| 𝐷 |] , let 𝐶 + 
+
+> 𝑖
+
+[𝑎, 𝑏 ] denote the number of positive annotations for 
+
+(𝑡 𝑎 , 𝑡 𝑏 ) ∈ 𝐸 observed until the 𝑖 -th iteration and 𝐶 − 
+
+> 𝑖
+
+[𝑎, 𝑏 ] defined analogously for negative pairs. Formally, 
+
+𝐶 + 
+
+> 𝑖
+
+[𝑎, 𝑏 ] = 𝐶 +  
+
+> 𝑖 −1
+
+[𝑎, 𝑏 ] + I[( 𝑡 𝑎 , 𝑡 𝑏 ) ∈ ¯𝑃 𝑖 ], 𝐶 + 
+
+> 0
+
+[𝑎, 𝑏 ] = 0,𝐶 − 
+
+> 𝑖
+
+[𝑎, 𝑏 ] = 𝐶 −  
+
+> 𝑖 −1
+
+[𝑎, 𝑏 ] + I[( 𝑡 𝑎 , 𝑡 𝑏 ) ∈ ¯𝑁 𝑖 ], 𝐶 − 
+
+> 0
+
+[𝑎, 𝑏 ] = 0.
+
+Finally, 𝑊 𝑖 [𝑎, 𝑏 ] = 𝐶 −        
+
+> 𝑖 [𝑎,𝑏 ]
+> 𝐶 +
+> 𝑖 [𝑎,𝑏 ]+ 𝐶 −
+> 𝑖 [𝑎,𝑏 ]
+
+is the edge weight at the 𝑖 -th iteration. Alg. 3 illustrates this process. We construct a sample set 𝑆 and query the LLM (lines 1-2), take transitive closure and obtain nega-tive labels (lines 3-4). We then update the counts of positive and negative labels (lines 5–7)—note that 𝐶 + and 𝐶 − are initially zero (in Alg. 2). Finally, we update the edge weights using the proportion of negative annotations (lines 8–9). 
+
+Example. Fig. 4 illustrates how edge weights get updated. The first graph (Fig. 4 Top) shows edge weights after 5 iterations and Table (a) shows how they are calculated for 𝑡 1, e.g., 𝑊 [1, 4] = 35 =
+
+0.6, At 𝑖 = 5, the records are clustered into two clusters, ˆ𝐶 1 =
+
+{𝑡 1, 𝑡 2, 𝑡 3 } and ˆ𝐶 2 = {𝑡 4 }. At the 6-th iteration, the algorithm samples 
+
+𝑆 6 = {𝑡 1, 𝑡 3, 𝑡 4 }, and the LLM returns pairs 𝑃 6 = {( 𝑡 1, 𝑡 3), (𝑡 1, 𝑡 4)} .
+
+> 5
+
+Algorithm 3: UpdateEdgeWeights (𝐷, P, 𝐶 + 
+
+> 𝑖 −1
+
+, 𝐶 − 
+
+> 𝑖 −1
+
+, 𝑖 )                                                                                       
+
+> Input :Dataset 𝐷 , task prompt P, positive and negative counts, 𝐶 +
+> 𝑖 −1, 𝐶 −
+> 𝑖 −1
+> so far, iteration number, 𝑖
+> Output : Updated pairwise edge weight matrix 𝑊
+> ⊲Sample and obtain LLM-suggested pairs
+> 1𝑆 ←random sample from 𝐷 ;
+> 2𝑃 ← M ( P, 𝑆 );⊲Pairs to be in the same class
+> 3¯𝑃 ←Transitive closure of 𝑃 ;
+> 4¯𝑁 ←𝑆 ×𝑆 \¯𝑃 ;
+> 5for 𝑡 𝑎 , 𝑡 𝑏 ∈𝑆, 𝑎 ≠𝑏 do
+> ⊲Aggregate positive and negative labels
+> 6𝐶 +
+> 𝑖 [𝑎, 𝑏 ] ← 𝐶 +
+> 𝑖 −1[𝑎, 𝑏 ] + I[ ( 𝑡 𝑎 , 𝑡 𝑏 ) ∈ ¯𝑃 ];
+> 7𝐶 −
+> 𝑖 [𝑎, 𝑏 ] ← 𝐶 −
+> 𝑖 −1[𝑎, 𝑏 ] + I[ ( 𝑡 𝑎 , 𝑡 𝑏 ) ∈ ¯𝑁 ];
+> ⊲Modify pairwise edge weights
+> 8𝑊 𝑖 [𝑎, 𝑏 ] ← 𝐶 −
+> 𝑖 [𝑎,𝑏 ]
+> 𝐶 −
+> 𝑖 [𝑎,𝑏 ]+ 𝐶 +
+> 𝑖 [𝑎,𝑏 ];
+> 9return 𝑊 𝑖 ,𝐶 +
+> 𝑖 ,𝐶 −
+> 𝑖
+
+By performing transitive closure, all three record pairs in 𝑆 6 are considered positives. Therefore, the augmented pairs are ¯𝑃 6 = 𝑃 6 ∪{( 𝑡 3, 𝑡 4)} . We then update the edge weights, e.g., 𝑊 [1, 4] is updated to 36 = 0.5. This process is repeated for another sample set 𝑆 7 at the 7-th iteration. 
+
+3.1.2 Correlation Clustering and Termination. This step performs clustering and decides whether more edge weight refinement is needed. We use correlation clustering [ 14 ] to cluster the vertices given the edge weight matrix, 𝑊 .
+
+Correlation Clustering. Correlation clustering assigns clusters to records to minimize the sum of disagreements across all pairs. The disagreement between a pair of records 𝑡 𝑎 , 𝑡 𝑏 ∈ 𝐷 is defined as 
+
+𝑊 [𝑎, 𝑏 ] if 𝑡 𝑎 and 𝑡 𝑏 are assigned to the same cluster and (1−𝑊 [𝑎, 𝑏 ]) 
+
+otherwise. Formally, correlation clustering assigns a cluster ID 
+
+𝑖𝑑 𝑎 ∈ { 1, 2, · · · , 𝑘 } to each record 𝑡 𝑎 , 𝑎 ∈ [| 𝐷 |] . We define 𝑑 (𝑎, 𝑗 ) as the sum of disagreements for record 𝑡 𝑎 if 𝑡 𝑎 is assigned to cluster 𝑗 :
+
+𝑑 (𝑎, 𝑗 ) =∑︁  
+
+> 𝑖𝑑 𝑏 =𝑗,
+> 𝑎 ≠𝑏
+
+𝑊 [𝑎, 𝑏 ] + ∑︁  
+
+> 𝑖𝑑 𝑏 ≠𝑗,
+> 𝑎 ≠𝑏
+
+(1 − 𝑊 [𝑎, 𝑏 ]) .
+
+The goal is to assign cluster IDs that minimize the sum of disagree-ment for all records: Í𝑎 ∈ [ | 𝐷 | ] 𝑑 (𝑎, 𝑖𝑑 𝑎 ). Since correlation clustering is NP-Hard, we use local search as in [ 14 ]. The algorithm starts with a random cluster assignment and greedily modifies assignments to improve the objective. 
+
+Termination Decision . We terminate our clustering procedure (i.e., loop in line 2 of Alg. 2) if a change in clustering for a large subset of the records is unlikely after more edge weight refinement. We let 𝑑 ∗ (𝑎, 𝑖 ) = E[𝑑 (𝑎, 𝑖 )] for the 𝑖 -th cluster and 𝑎 -th record, 
+
+𝑖 ∈ [ 𝑘 ], 𝑎 ∈ [| 𝐷 |] , with the expectation taken over our sampling process. Intuitively, Change in clustering is likely if at a specific iteration 𝑑 (𝑎, 𝑖 ) differs significantly from 𝑑 ∗ (𝑎, 𝑖 ). This is because 
+
+𝑑 (𝑎, 𝑖 ) must eventually converge to 𝑑 ∗ (𝑎, 𝑖 ), and if |𝑑 (𝑎, 𝑖 ) − 𝑑 ∗ (𝑎, 𝑖 )| 
+
+is large, this can significantly impact the objective. Thus, to decide whether we should terminate or not, we use the difference between 
+
+𝑑 (𝑎, 𝑖 ) and 𝑑 ∗ (𝑎, 𝑖 ) as a proxy—if the difference is sufficiently small, then the current clustering is unlikely to change in the future. Formally, we say the 𝑎 -th record, assigned to a cluster 𝑖𝑑 𝑎 ∈ [ 𝑘 ],is uncertain if 𝑑 ∗ (𝑎, 𝑖𝑑 𝑎 ) − 𝑑 (𝑎, 𝑖𝑑 𝑎 ) ≥ 𝜖 𝑎 and 𝑑 (𝑎, 𝑖 ) − 𝑑 ∗ (𝑎, 𝑖 ) ≥ 𝜖 𝑎 
+
+for all 𝑖 ∈ [ 𝑘 ] \ { 𝑖𝑑 𝑎 }, for an 𝜖 𝑎 ≥ 0 specified later. This notion evaluates whether 𝑑 underestimate 𝑑 ∗ for the cluster 𝑎 is assigned to while overestimating 𝑑 ∗ for other clusters—a setting which likely implies clustering of 𝑎 will change with more observations. We use 
+
+Figure 5: Cluster assignment example. 
+
+𝜖 𝑎 = 12 min 𝑗 ∈ [ 𝑘 ]\{ 𝑖𝑑 𝑎 } (𝑑 (𝑎, 𝑖𝑑 𝑎 ) − 𝑑 (𝑎, 𝑗 )) to help decide whether sampling error is low enough ; error more than 𝜖 𝑎 likely causes a change in clustering because it changes the best cluster for record 
+
+𝑎 . Using this notion of uncertainty, then, our goal is to take enough samples so that most records are no longer uncertain. The following lemma, based on simplifying statistical assumptions, provides an upper bound on the expected number of uncertain records. 
+
+Lemma 3.1. Given a clustering ˆ𝐶 1, ..., ˆ𝐶 𝑘 of a dataset 𝐷 , and assum-ing edge weights are obtained independently, the expected number of uncertain records after 𝑟 samples is at most Í𝑎 ∈𝐷 exp (2𝑟 Í𝑖 ∈ [ 𝑘 ]   
+
+> 𝜖 2
+> 𝑎
+> |ˆ𝐶 𝑖 |2
+
+).
+
+Proof of Lemma 3.1 is based on an application of Hoeffding’s inequality [ 22 ] and is deferred to Appx. D. The lemma makes an independence assumption which is not necessarily true. Neverthe-less, we observed this statistical model to be sufficient to obtain a suitable termination decision in practice. Finally, to decide whether to terminate, we evaluate if the bound on the number of undecided records in Lemma 3.1 is below a thresh-old 𝜏 , and if so, terminate. We set 𝜏 to a small portion of dataset size 
+
+|𝐷 | (set to 0.2 × | 𝐷 | in our experiments), since when the fraction of uncertain pairs is small, the clustering outcome is unlikely to significantly change based on changes to edge weights. 
+
+## 3.2 Assigning Clusters to Classes 
+
+After obtaining clusters, we assign each to a class. A simple strategy is to query the LLM for the most suitable class for each cluster inde-pendently. However, this approach yields low accuracy especially when classes have overlapping boundaries. Errors occur due to a lack of holistic data understanding, now exacerbated because of potential inaccuracies in the clustering step. Fig. 4 shows an ex-ample task of classifying papers by topic. Classes include “Math” and “Stats” where “Math” class excludes statistics papers. Without seeing other math papers, an LLM may misclassify the statistics class as mathematics, as it cannot distinguish the boundary be-tween them. A few misclassified records complicate the task, since a predominantly statistics cluster may contain a few non-statistics papers. Instead of assigning class names independently, we take advan-tage of the fact that there is a one-to-one mapping between clusters and class names and jointly assign class names to all clusters using a bipartite matching approach. Specifically, we construct a com-plete bipartite graph whose two partitions correspond to clusters and class names respectively, and the edge between a cluster and a class denotes the probability the cluster belongs to the class—we use LLMs to estimate this probability as discussed below. Then to assign clusters to class names, we find the maximum weight matching—maximizing the total probability of correct cluster as-signment across all clusters—which can be done in PTime using the Hungarian Algorithm [32]. 
+
+> 6
+
+Algorithm 4: Assign ( ˆ𝐶, P, 𝑘, 𝐿 )                                                                            
+
+> Input :Clusters ˆ𝐶 1,ˆ𝐶 2,· · · ,ˆ𝐶 𝑘 , class labels {ℓ1, ℓ 2,· · · , ℓ 𝑘 }, task prompt P
+> Output : Class labels of all records
+> 1𝑊 : ˆ 𝐶 ×ℓ→R,𝑊 ←0;
+> 2for 𝑖 ←1to 𝑘 do
+> 3for ℓ𝑗 ∈𝐿 do
+> 4𝑊 (ˆ𝐶 𝑖 , ℓ 𝑗 ) ← 𝒮 M(P, 𝐿, ˆ𝐶 𝑖 , ℓ 𝑗 ) · | ˆ𝐶 𝑖 |;
+> 5𝑀 ←BipartiteMatching (ˆ𝐶, 𝐿,𝑊 )
+> 6for (ˆ𝐶 𝑖 , ℓ ˆ𝐶 𝑖 ) ∈ 𝑀 do
+> 7for 𝑡 𝑗 ∈ˆ𝐶 𝑖 do
+> 8ˆ𝑦 𝑗 ←ℓˆ𝐶 𝑖 ;
+> 9return {ˆ𝑦 1,ˆ𝑦 2,· · · ,ˆ𝑦 𝐵 }
+
+Formally, let ˆC = { ˆ𝐶 1, ..., ˆ𝐶 𝑘 } be the set of clusters, and consider the weighted bipartite graph B = ( ˆC, 𝐿, ˆC× 𝐿,𝑊 ) with edge weights 
+
+𝑊 . We use LLM log-probabilities when assigning class names to clusters as the edge weights 𝑊 , specifically, 
+
+𝑊 ( ˆ𝐶 𝑖 , ℓ 𝑗 ) = 𝒮 M (P, 𝐿, ˆ𝐶 𝑖 , ℓ 𝑗 ) · | ˆ𝐶 𝑖 |,
+
+where 𝒮 M (P, 𝐿, ˆ𝐶 𝑖 , ℓ 𝑗 ) denotes the log-probability of model M
+
+when asked if cluster ˆ𝐶 𝑖 belongs to class ℓ𝑗 . We then find a perfect matching 𝑀 ⊆ ˆC × 𝐿 with maximum weights, Í    
+
+> (ˆ𝐶 𝑖 ,ℓ 𝑗 ) ∈ 𝑀
+
+𝑊 ( ˆ𝐶 𝑖 , ℓ 𝑗 ).Algorithm 4 shows this process. For each ˆ𝐶 𝑖 , we estimate the edge weights for all classes using an LLM M (lines 2-4)—this step can be implemented by a single LLM call for each cluster. Then, we perform bipartite matching, obtain class names for each cluster (line 5) and then assign all the records in a cluster the class obtained for that cluster during bipartite matching (lines 6-8). 
+
+## 4 BUDGET-AWARE CLASSIFICATION 
+
+The clustering-based classification approach in Sec. 3 can be expen-sive. As discussed in Sec. 2.2, we use a cascade approach to reduce the cost and adhere to budgetary constraints provided by the user (i.e., step 2○ of Algorithm 1). We first discuss our cascade approach in Sec. 4.1, and present a cost analysis in Sec. 4.2. 
+
+## 4.1 Cascade Approach 
+
+In this section, we discuss our cascade approach to ensure the cost is within the budget eC.To maximize accuracy while staying within the cost budget eC,for each record, we decide whether to use CbClassification , or row-by-row processing with M𝑒 or M𝑐 . In model cascade termi-nology (see Sec. 2), we consider CbClassification as our oracle, and row-by-row processing with M𝑒 or M𝑐 as two proxies, each with different cost-accuracy trade-offs. For a given dataset, we first decide a cascade architecture (i.e., what methods are used), and then decide how to set the cascade thresholds (which determines the records for which each method is used). 
+
+Cascade Architecture . For simplicity, for a given dataset, we complement CbClassification (oracle) only with one of M𝑒 or 
+
+M𝑐 , that is, we pick only one of the proxies for our cascade. Thus, our cascade architecture processes some of the records with one of M𝑒 and M𝑐 , and uses CbClassification for the rest. We use a worst-case estimate to decide which proxy model to use: we use M𝑒 
+
+if there exists a cascade solution using only M𝑒 and CbClassification 
+
+that respects the cost budget, and use M𝑐 otherwise. Formally, we use M𝑒 if C0 + Í𝑡 ∈ D\ 𝐷 0 cost (M 𝑒 (P, 𝑡 )) ≤ eC and M𝑐 otherwise. 
+
+Algorithm 5: PredictWithCascade (𝐷, P, 𝑘, 𝐿, 𝐷 0, C0)                                                                        
+
+> Input :Dataset 𝐷 , task prompt P, integer 𝑘 , class labels 𝐿 , sample batch 𝐷 0,cost C0
+> Output : Classification ˆ𝑦 𝐷 𝑅 of the subset 𝐷 𝑅 ⊆𝐷 \𝐷 0
+> 1if C0· ⌈ 𝑛 𝐵 ⌉ ≤ eCthen return ∅;
+> 2else
+> 3CM𝑒 ←Í𝑡 ∈D\ 𝐷 0cost ( M 𝑒 (P, 𝑡 ) ) ;
+> 4if C0+ C M𝑒 ≤eCthen M𝑃 ← M 𝑒 ;
+> 5else M𝑃 ← M 𝑐 ;
+> 6𝜏 ←max 0≤𝜏 ≤1{𝜏 |cost (𝜏 ) ≤ eC } ;
+> 7𝐷 𝑅 ← { 𝑡 |𝑡 ∈ D \ 𝐷 0,𝒮 M(P, 𝑡 ) ≥ 𝜏 };
+> 8return { M 𝑃 (P, 𝑡, 𝐿 ) | 𝑡 ∈𝐷 𝑅 }, 𝐷 𝑅
+
+This decision criteria guarantees that, in the worst case, we can pro-cess all records with the chosen model (since we can always set an appropriate threshold), though, in practice, we improve accuracy us-ing CbClassification . More complex cascade architectures (e.g., using both models combined with CbClassification , each for different subsets) are possible but we observed our simple heuristic to provide good cost-accuracy trade-offs. 
+
+Cascade Threshold. Denote by M𝑃 ∈ {M 𝑐 , M𝑒 } the chosen model based on the decision criteria discussed above. To process the records, we use M𝑃 ’s confidence score for each record 𝑡 ∈ 𝐷 ,denoted as 𝒮 M𝑃 (P, 𝑡 ), to decide whether to use the proxy for that record, similar to [ 44 , 73 ]. Specifically, we determine a threshold, 
+
+𝜏 ∗ on M𝑃 ’s confidence scores, use CbClassification on records where M𝑃 ’s confidence is below 𝜏 ∗ and use M𝑃 on the rest. We pick a threshold that maximizes use of CbClassification while respecting the cost budget. For any candidate threshold, 𝜏 , we de-fine cost (𝜏 ) to be the total cost if we use row-by-row classifi-cation by M𝑃 on all records with confidence at least 𝜏 , and use 
+
+CbClassification for the remaining. We choose the largest 𝜏 such that cost (𝜏 ) ≤ eC.It remains to estimate the cost, cost (𝜏 ), which consists of two parts: the cost of (1) CbClassification on 𝐷 0 and records in D\ 𝐷 0
+
+with confidence less than 𝜏 ; and (2) row-by-row classification by 
+
+M𝑃 on D \ 𝐷 0. For (1) we use the cost on the sample batch 𝐷 0 to estimate the cost of CbClassification per batch as C0 (see Alg. 1). For (2) we compute the cost, CM𝑃 , of using M𝑃 on D \ 𝐷 0 based on number of tokens that would be passed to the LLM. cost (𝜏 ) is 
+
+cost (𝜏 ) = CM𝑃 + C 0 ·
+
+
+
+1 + ⌈ 𝑛 (𝜏 )
+
+𝐵 ⌉
+
+
+
+, (2) where 𝑛 (𝜏 ) = |{ 𝑡 ∈ D \ 𝐷 0 | 𝒮 M (P, 𝑡 ) < 𝜏 }| denotes the number of records processed by CbClassification in D \ 𝐷 0
+
+Algorithm . Algorithm 5 shows this process. We first check whether we can perform CbClassification on the full dataset (line 1). If not, we estimate the cost CM𝑒 (line 3). If M𝑒 is feasible, we choose it as the proxy (line 4). Otherwise, we choose M𝑐 as the proxy (line 5). Then, we calculate the threshold 𝜏 based on the chosen proxy and the cost-estimation formula in Eq. 2 (line 6). Finally, we filter out the records with confidence scores above 𝜏 as 
+
+𝐷 𝑅 (line 7), and return row-by-row assignment from M𝑃 as their predictions (line 8). 
+
+## 4.2 Cost Analysis and Discussion 
+
+Cost Analysis. We analyze the cost of HoldUp for classification. To simplify notation, we assume all records and class names have 
+
+> 7
+
+Algorithm 6: HoldUp T (D , P, 𝑘, 𝐿 )                                                                                                                       
+
+> Input :Task type T, Dataset D, task prompt P, integer 𝑘 , class labels 𝐿 (∅
+> when clustering)
+> Output : Answer ˆ𝑌
+> ⊲1○Cluster and assign a sample batch 𝐷 0
+> 1𝐷 0←a sample batch from D;
+> 2ˆ𝐶 ←Cluster (𝐷 0,P, 𝑘 );
+> 3if T=clustering then 𝐿 ←summarize clusters with LLM;
+> 4switch Tdo
+> 5case classification or clustering do
+> 6ˆ𝑌 𝐷 0←Assign (ˆ𝐶, P, 𝑘, 𝐿 )
+> 7case scoring do ˆ𝑌 𝐷 0←Sort (ˆ𝐶, P, 𝑘, 𝐿 );
+> 8C0←total cost of step 1 ○;
+> ⊲2○Model cascade
+> 9ˆ𝑌 𝐷 𝑅 ←PredictWithCascade ( D ,P, 𝑘, 𝐿, 𝐷 0,C0)
+> ⊲3○Batched processing
+> 10 ˆ𝑌 ←ˆ𝑌 𝐷 0∪ˆ𝑌 𝐷 𝑅 ;
+> 11 𝐷 𝑋 , 1,· · · , 𝐷 𝑋 ,𝑛 𝐵 ←batches partitioned from D \ 𝐷 0\𝐷 𝑅 ;
+> 12 for 𝑖 ←1to 𝑛 𝐵 do
+> 13 ˆ𝐶 𝑋 ,𝑖 ←Cluster (𝐷 𝑋 ,𝑖 ,P, 𝑘, 𝐿 );
+> 14 switch Tdo
+> 15 case classification or clustering do
+> 16 ˆ𝑌 ←ˆ𝑌 ∪Assign (ˆ𝐶 𝑋 ,𝑖 ,P, 𝑘, 𝐿 )
+> 17 case scoring do ˆ𝑌 ←ˆ𝑌 ∪Sort (ˆ𝐶 𝑋 ,𝑖 ,P, 𝑘, 𝐿 );
+> 18 return ˆ𝑌
+
+fixed length, and denote by 𝐿 𝑟 total number of tokens in the dataset and by 𝐿 ℓ the total number of tokens in the class names. Also denote by 𝑚 the number of sampling iterations in Alg. 2 (i.e., number of iterations of the loop in line 2), 𝑟 = |𝐷 𝑋 | 
+
+> 𝑛
+
+the fraction of records processed by clustering-based classification, and 𝑐 proxy as the cost per token for the model M𝑃 chosen as proxy in Sec. 4.1. All of 
+
+𝑚, 𝑟 and 𝑐 proxy are automatically determined by HoldUp . Finally, let 𝑐 assignment and 𝑐 cluster denote the cost per token for models used in our clustering and cluster assignment steps, whose choice is determined at the end of this section based on this cost analysis. The following proposition shows the cost of HoldUp .
+
+Proposition 4.1. The total cost of classification with HoldUp (i.e., Alg. 1) is at most 
+
+𝜘𝐿 𝑟 (𝑐 proxy + 𝑚𝑟𝑐 cluster + 𝑟𝑐 assignment ) + 𝜘𝑛𝐿 ℓ (𝑐 proxy + 𝑟𝑘𝑐 assignment ),
+
+where 𝜘 is a universal constant. 
+
+The proof is deferred to Appx. D. 
+
+Discussion. First, in the above expression, the first term in-volving 𝐿 𝑟 is usually dominant, since the number of tokens per record is typically much larger than the number of tokens in class names. Second, the cost depends on 𝑚 , that is the number of sam-ples taken during clustering. In practice, 𝑚 depends on the difficulty of clustering for a given dataset. If clustering is simple for a dataset, often few samples to obtain edge weights are sufficient to obtain well-separated clusters, so HoldUp terminates early (based on the decision criteria in Sec. 3.1.2). On the other hand, for a difficult dataset, clusters may not be well-separated, so minor changes in edge weights can have significant impact on clustering, and thus 
+
+HoldUp terminates after taking more samples. As such, HoldUp 
+
+adapts to the dataset, incurring more cost if dataset is difficult. Finally, we use M𝑐 for clustering (in Alg. 3) and M𝑒 for cluster assignment (in Alg. 4) to ensure cost remains low even for large 𝑚 .
+
+## 5 OTHER TASKS WITH HOLDUP 
+
+In this section, we discuss how HoldUp can be used to perform other tasks. We first discuss scoring and clustering tasks in Sec. 5.1, for which a generalization of our classification method can be used. We then discuss other tasks such as extraction, joins and summarization in Sec. 5.2. 
+
+## 5.1 Scoring and Clustering with HoldUp 
+
+We discuss extending our solution to scoring and clustering. We first define scoring and clustering problems in Sec. 5.1.1, and present a unified algorithm that solves all of classification, scoring, and clustering tasks in Sec. 5.1.2, with task-specific details in Sec. 5.1.3. 
+
+5.1.1 Problem Definition 
+
+Scoring . Scoring is similar to classification, except that we assign an integer score to every record, so that classes are ordered . Specifi-cally, the user provides a natural language prompt P specifying the scoring instruction, an integer 𝑘 so that the set of possible scores is 
+
+{1, 2, ..., 𝑘 }, and an (optional) description of the 𝑘 scores ℓ1, ℓ 2, · · · , ℓ 𝑘 .The goal is to assign a score, ˆ𝑧 𝑖 ∈ [ 𝑘 ] to each record 𝑖 ∈ [ 𝑛 ].
+
+Clustering . The user provides a natural language prompt P
+
+specifying the clustering task, and an integer 𝑘 denoting the number of clusters. The goal of clustering is to partition D into 𝑘 disjoint predicted clusters { ˆ𝐶 1, ˆ𝐶 2, · · · , ˆ𝐶 𝑘 } according to P.
+
+5.1.2 Unified Algorithm for Classification, Scoring, and Clustering. 
+
+We make minor modifications to our classification algorithm to perform scoring and clustering. As was illustrated in Fig. 3, our classification algorithm 1○ classifies a sample subset of the data using a clustering-based classification method, 2○ uses a cascade approach to decide what subset of the data to classify with cheaper row-by-row methods and 3○ processes the rest of the data with the clustering-based classification method. Scoring is done almost identically to classification, but we take advantage of the order among the scores to improve cluster as-signment in steps 1○ and 3○. Specifically, instead of using bipartite matching, we use an ILP-based sorting method to assign clusters to scores. We use an LLM to decide the order for every pair of clusters, establish a total order across all clusters that minimizes violations of the pairwise orders obtained from the LLM, and assign each cluster a score according to its position in the order (details in Sec. 5.1.3). Readers familiar with work on crowd-powered algorithms will notice similarities to these approaches [8, 17, 39]. Clustering also follows our classification algorithm, except after we cluster the initial batch of records, 𝐷 0, we use an LLM to sum-marize each cluster. We then consider these cluster summaries as class names in a classification task, and classify the rest of the data into the classes specified by the summaries. The clusters are finally the records classified to belong to the same cluster summary. Algorithm 6 describes the workflow for performing classification, scoring, and clustering under this framework. In step 1○, we cluster a sample batch (lines 1-2) and assign clusters to labels with a task dependent assignment algorithm (lines 3-7). For clustering, this step also generates labels (i.e., cluster summaries) (line 3). We then record the total cost of step 1○ (line 8) and use cascade for row-by-row LLM assignment (line 9). Finally, we split the remaining records into batches (line 11). Each batch is first clustered (line 13), and then assigned according to the task (lines 14-17). 
+
+> 8
+
+Algorithm 7: Sort ( ˆ𝐶, P, 𝑘, 𝐿 )                                                                                                              
+
+> Input :Clusters ˆ𝐶 1,ˆ𝐶 2,· · · ,ˆ𝐶 𝑘 , task prompt P, integer 𝑘 score labels 𝐿
+> Output : Scores for records in 𝐷
+> 1𝑊 ←0;
+> 2for 𝑖, 𝑗 ←1to 𝑘 do
+> 3for 𝑖𝑡 ←1to 𝑚 sort do
+> 4𝑠, 𝑡 ←random record pair from ˆ𝐶 𝑖 ×ˆ𝐶 𝑗 ;
+> 5𝑜𝑟𝑑𝑒𝑟 ← M ( P, 𝑠, 𝑡 );⊲Decide order between 𝑠 and 𝑡
+> 6if 𝑜𝑟𝑑𝑒𝑟 =‘<’ then 𝑊 (ˆ𝐶 𝑖 ,ˆ𝐶 𝑗 ) ← 𝑊 (ˆ𝐶 𝑖 ,ˆ𝐶 𝑗 ) + 1;
+> 7𝑊 (ˆ𝐶 𝑖 ,ˆ𝐶 𝑗 ) ← 1
+> 𝑚𝑠𝑜𝑟𝑡 𝑊 (ˆ𝐶 𝑖 ,ˆ𝐶 𝑗 );
+> 8𝜋 ←ILP (𝑊 );⊲Find total order across clusters
+> 9for 𝑖 ←1to 𝑘 do
+> 10 for 𝑡 𝑗 ∈ˆ𝐶 𝑖 do
+> 11 ˆ𝑧 𝑗 ←𝜋 (ˆ𝐶 𝑖 );
+> 12 return {ˆ𝑧 1,ˆ𝑧 2,· · · ,ˆ𝑧 𝐵 }
+
+5.1.3 Assigning Scores to clusters. For scoring, our bipartite cluster assignment algorithm presented in Sec. 3.2 performs poorly be-cause LLMs are unable to accurately estimate the probability of a cluster belonging to a specific score. Thus, the edge weights in the bipartite graph would be inaccurate, leading to incorrect assign-ment. Instead, we take advantage of the fact that clusters must be ordered to perform cluster assignment. Rather than asking directly for scores from LLMs, we instead ask for comparison between clus-ters, i.e., whether a cluster should be scored higher or lower than another—similar to prior work [ 38 ], we observed LLMs to provide better pairwise comparison between clusters than directly scoring each. We then use these pairwise comparisons between clusters to establish a total order between them, where we find an order with minimum violations of the pairwise comparisons. Formally, for every pair of clusters, ˆ𝐶 𝑖 and ˆ𝐶 𝑗 , we first use an LLM to estimate the probability that ˆ𝐶 𝑖 has a higher score than ˆ𝐶 𝑗 ,denoted by 𝑊 ( ˆ𝐶 𝑖 , ˆ𝐶 𝑗 ). To obtain 𝑊 ( ˆ𝐶 𝑖 , ˆ𝐶 𝑗 ), we randomly sample record pairs (𝑠, 𝑡 ) ∈ ˆ𝐶 𝑖 × ˆ𝐶 𝑗 , ask an LLM to decide which record, 𝑠 
+
+or 𝑡 should be scored higher, and let 𝑊 ( ˆ𝐶 𝑖 , ˆ𝐶 𝑗 ) to be the fraction of pairs where 𝑠 was judged to have a lower score than 𝑡 by the LLM. We then find a total ordering of clusters such that the total weight of incorrect pairwise orders is minimized. That is, if 𝜋 ( ˆ𝐶 𝑖 ) denotes the score assigned to ˆ𝐶 𝑖 , we minimize ∑︁  
+
+> 1≤𝑖 <𝑗 ≤𝑘
+
+I[𝜋 ( ˆ𝐶 𝑖 ) > 𝜋 ( ˆ𝐶 𝑗 )] 𝑊 ( ˆ𝐶 𝑖 , ˆ𝐶 𝑗 ) + I[𝜋 ( ˆ𝐶 𝑖 ) < 𝜋 ( ˆ𝐶 𝑗 )] 𝑊 ( ˆ𝐶 𝑗 , ˆ𝐶 𝑖 ).
+
+We formulate the problem of finding a total ordering while mini-mizing the above objective as an Integer Linear Program (ILP) and solve it optimally, details are deferred to Appx. C. Algorithm 7 shows the cluster assignment process. We iterate over each pair of clusters to obtain likelihood estimate of their pairwise order (lines 1-6). We then use an ILP to obtain the scoring 
+
+𝜋 that minimizes the sum of violations (line 7). Finally, we assign all records in the cluster to the same score based on 𝜋 (lines 8-10). 
+
+## 5.2 Other Tasks 
+
+We next briefly discuss how HoldUp can be used for other data processing tasks. First, note that, as described, HoldUp directly applies to filtering tasks—a filter is a binary classification task. We expect similar ideas to also apply to joins, since a join is a filter on the cross product of two datasets. However, we expect our cascade approach needs to change to allow for better cost reduction, following existing cost optimizations used for joins [44, 72]. 
+
+Table 2: Summary of dataset statistics 
+
+(a) Datasets for classification and clustering                                             
+
+> Dataset Size kDescription Classes
+> AgNews [77] 127,600 4News stories Section Blurb [2] 28,729 36 Book blurbs Generes Clinc [33] 22,500 10 User queries Domain DBPedia [77] 630,000 14 Wiki entries Category GoEmo [10] 211,225 27 Reddit comments Emotion Massive [42] 22,288 11 User queries Domain Mtop [42] 16,521 18 User queries Domain ArxivS2S [42] 732,723 38 Paper titles Primary domain BiorxivS2S [42] 75,000 25 Paper titles Primary domain MedrxivS2S [42] 37,500 51 Paper titles Primary domain
+
+(b) Datasets for scoring.                         
+
+> Dataset Size kDescription Scoring dimension
+> Amazon [42] 701,528 6Product reviews Rating Asap [20] 1,982 4Student essays Writing grade Sentiment [1] 214,158 3User comments Sentiment polarity TicketSupport [57] 8,469 4Support tickets Priority Yelp [42] 50,000 5Business reviews Rating
+
+Finally, we expect other open-ended map operations, e.g., ex-traction or summarization tasks, to also benefit from holistic data understanding. For example, for extraction, holistic data under-standing can help resolve ambiguities introduced by formatting or text alignment issues (e.g., by understanding correct alignment from other documents), or it can help decide correct output format and content (e.g., when extracting address, whether the country should be included or not). Similar benefits can also hold for sum-marization. For example, when first clustering records and asking an LLM to summarize each, a suitable summarization may need to compare and contrast each cluster which requires holistically understanding the data. A more thorough exploration is out of scope of this paper and is left to future work. 
+
+## 6 EXPERIMENTAL RESULTS 
+
+We next empirically evaluate HoldUp . We discuss the experiment settings in Sec. 6.1, compare HoldUp with baselines in Sec 6.2, and present ablation studies in Sec. 6.3. Additional ablation studies and results on sensitivity to system parameters are presented in Appx. B. 
+
+## 6.1 Setup 
+
+Tasks and datasets. We conduct experiments on a diverse col-lection of 15 real-world datasets typically used for classification, scoring, and clustering. For classification and clustering, datasets used are listed in Table 2a. These datasets cover a wide range of domains, including news, Reddit comments, and academic papers. Each dataset contains two columns: the text data and a label. For classification, the goal is to predict this label. For clustering, fol-lowing standard practice [ 18 , 68 ], we use the same datasets but withhold the label set from all methods. We then evaluate how well each method’s clustering agrees with the clustering induced by the labels. In both cases, task prompt is a short sentence, e.g., “Classify news articles based on their topic.” For the scoring task, we use datasets listed in Table 2b. These datasets span topics including essay scoring, sentiment analysis, and product analysis. We provide the text data, the scoring range, and the description of each score as labels to the methods. Prompts for all datasets and further details are provided in Appx. B. 
+
+Baselines. For classification and scoring, we compare HoldUp 
+
+against three classes of baselines. The first involves Row-by-Row 
+
+processing, which follows existing systems [ 26 , 44 , 47 , 51 ] that 
+
+> 9
+
+Figure 6: Classification accuracy across datasets 
+
+Figure 7: Cost/accuracy trade-offs for classification 
+
+Figure 8: Scoring accuracy across datasets 
+
+Figure 9: Cost/accuracy trade-offs for scoring 
+
+apply an LLM independently to each row given the task instruction. The second class considers simple methods for incorporating data context during processing. Batch partitions the dataset into batches and applies an LLM independently to each one, while Rubric first provides a random sample of records to an LLM to generate a task rubric, then applies the LLM row by row with this rubric appended to the prompt. The third class considers methods with cost optimization. We use BARGAIN [ 73 ], the state-of-the-art model cascade method that optimizes cost while still processing rows independently, to evaluate cost-accuracy tradeoffs. For clustering, we compare against various baselines that use LLMs or embedding models for clustering: (1) K-means+Embed 
+
+applies K-means to record embeddings, a common approach for text clustering [ 19 , 70 , 75 ]. (2) LabelCluster [23 ] generates candidate labels for records in batches, merges them into 𝑘 labels, and assigns each record to a label via row-by-row LLM calls. (3) Lotus [44 ]uses an LLM to predict groups based on the task instruction, then refines them with embedding-based K-means (we use the semantic group-by operator). (4) Keyphrase [ 62 ] augments each row with LLM-generated keyphrases derived from the clustering instruction and applies embedding-based K-means to the augmented rows. 
+
+Models. We use OpenAI GPT-4.1 (as M𝑒 ) and GPT-4.1-Nano (as 
+
+M𝑐 ) as our LLMs and text-embedding-3-large as embedding model. 
+
+Metrics. We report cost and accuracy for different methods. For classification and scoring we report accuracy as defined in Eq. 1. For scoring, we additionally consider pairwise accuracy that evaluates whether pairs of records are ordered correctly based on their output scores. Given the ground-truth scores 𝑌 = {𝑦 𝑖 }𝑛 𝑖 =1 and predicted scores ˆ𝑌 = { ˆ𝑦 𝑖 }𝑛 𝑖 =1, pairwise accuracy is defined as: 
+
+Ascr (𝑌, ˆ𝑌 ) = 2
+
+𝑛 (𝑛 − 1)
+
+> 𝑛
+
+∑︁ 
+
+> 𝑖 =1
+> 𝑛
+
+∑︁ 
+
+> 𝑗 =𝑖 +1
+
+Isgn ( ˆ𝑦 𝑖 − ˆ𝑦 𝑗 ) = sgn (𝑦 𝑖 − 𝑦 𝑗 ) ,
+
+where sgn (𝑥 ) is the sign function. For clustering, given the pre-dicted clusters ˆ𝐶 = { ˆ𝐶 𝑖 }𝑘 𝑖 =1 and ground-truth clusters 𝐶 = {𝐶 𝑗 }𝑘 𝑗 =1,we use clustering accuracy , which measures how well the predicted clusters align with the ground-truth clusters, formally: 
+
+Aclu (𝐶, ˆ𝐶 ) = 1
+
+𝑛 
+
+> 𝑘
+
+∑︁ 
+
+> 𝑖 =1
+> 𝑘
+
+max 
+
+> 𝑗 =1
+
+ˆ𝐶 𝑖 ∩ 𝐶 𝑗 .
+
+Due to budgetary constraints, we evaluate each method on a ran-dom sample subset of 2,000 records for all datasets to estimate accuracy and cost. We report US$ cost per 1,000 points to normalize cost across datasets irrespective of data size (i.e., for a dataset, D,we report total cost divided by |D| multiplied by 1,000). 
+
+Parameters. For HoldUp we use 𝑚 max = 800 , |𝑆 | = 80 and 
+
+𝐵 = max (200 , 10 · 𝑘 )—we evaluate sensitivity to parameters in Appx. B where we observe that a large set of values work well across datasets. By default, we let cost budget e𝐶 = ∞ (i.e., the goal is to obtain maximum accuracy without a budgetary constraint) but we also present results at different e𝐶 values. For BARGAIN, we set the accuracy target 0.9 by default. For Batch and Rubric, we set batch size 𝐵 = 50 . Unless otherwise stated, for all the methods we use GPT-4.1. 
+
+## 6.2 Comparison across Datasets 
+
+Classification. Fig. 6 shows the accuracy of HoldUp compared with various baselines across datasets. HoldUp consistently im-proves accuracy over baselines, providing up to 33% improve-ment over row-by-row processing. Both Batch and Rubric yield worse accuracy than Row-by-Row, as LLM accuracy degrades when processing large data subsets; Rubric is worse because accurately expressing classification criteria in natural language is difficult. Across datasets, we see that HoldUp matches Row-by-Row ac-curacy whenever it is accurate (e.g., on DBPedia and MTop), while 
+
+> 10
+
+Figure 10: Clustering accuracy and cost across datasets 
+
+often providing significant improvements when it is not. Row-by-Row performs well on datasets with well-defined, distinct classes where the correct label can be inferred without broader data con-text (e.g., in DBPedia the goal is to classify entities based on type such as “Artist” or “Athlete”). On the other hand, large accuracy gains for HoldUp often occurs in datasets with many classes (e.g., ArxivS2S and BiorxivS2S). In such datasets, many class labels are similar and the correct class for a record is ambiguous when it is considered in isolation; HoldUp resolves such ambiguities by holistically considering the dataset context. We next evaluate the cost-accuracy trade-offs HoldUp provides when given a fixed budget on six representative datasets. For BAR-GAIN, we vary the accuracy target in the set {0.1, 0.3, 0.5, 0.7, 0.9}
+
+and plot the observed cost and accuracy. For HoldUp , we vary the cost budget, e𝐶 , to obtain cost comparable to BARGAIN. We drop Rubric from this experiment as it was dominated by Row-by-Row (GPT-4.1) across all datasets in both cost and accuracy. Fig. 7 shows that HoldUp provides better cost-accuracy trade-offs in general. We observe two categories of datasets. In the first category, HoldUp 
+
+improves cost accuracy trade-offs across all cost regimes (e.g., for ArxivS2S and BiorxivS2S). In fact, for ArxivS2S and BiorxivS2S, 
+
+HoldUp is always cheaper than Row-by-Row processing with GPT-4.1, while also providing better accuracy. In the second category, e.g., AGNews and Massive, HoldUp provides the same cost-accuracy trade-offs as BARGAIN in low-cost regime, but extends the trade-offs to enable more accurate results at higher cost. In this category, the results show that when given more budget than Row-by-Row processing, we can further improve accuracy with HoldUp .
+
+Scoring . Fig. 8 shows how HoldUp compares with baselines for scoring. We see similar accuracy gains as for classification, with 
+
+HoldUp consistently improving accuracy over baselines with up to 28% improvement in accuracy over Row-by-Row process-ing. Trends are similar to classification, although the accuracies, across all methods, are lower for scoring. In general, scoring is a more difficult task, as boundaries between scores are often un-clear. HoldUp , by taking data context into account, is able to better understand human preferences and improve scoring accuracy. We next evaluate cost-accuracy trade-offs HoldUp provides at a given cost budget on three representative datasets (results on other datasets were similar). Fig. 9 shows the results. We see that at the low-cost regime, HoldUp perform similarly to BARGAIN and Row-by-Row. Indeed, for scoring, clustering-based classification is often expensive, since the number of iterations, 𝑚 , ends up being large (see Prop. 4.1). Thus, when cost budget is low, HoldUp uses row-by-row processing for most records, yielding accuracy similar to BARGAIN and row-by-row processing. However, HoldUp is able to extend the Pareto frontier, providing significantly higher accuracy when higher budget is available. For Ticket Support, we see that Batch and Rubric provide better cost-accuracy trade-offs 
+
+Table 3: Impact of edge weight calculation on classification                                    
+
+> Method AgNews BiorxivS2S Clinc Acc Cost Acc Cost Acc Cost
+> HoldUp with cluster labels 0.33 0.24 0.18 0.19 0.24 0.36
+> HoldUp with pairwise labels 0.72 39.75 0.45 36.83 0.32 29.33
+> HoldUp minus transitivity 0.85 1.85 0.71 0.28 0.87 0.27
+> HoldUp 0.97 2.00 0.81 0.36 0.87 0.16
+
+than Row-by-Row because data context is particularly important in this dataset, which also causes those approaches to outperform 
+
+HoldUp since it mostly uses Row-by-Row at low budget regime. Indeed, changing HoldUp to use Batch and Rubric as proxies in the cascade architecture can enable it to also benefit from their advantages, which we leave to future work. 
+
+Clustering . Fig. 10 compares HoldUp with baselines for cluster-ing. Results are similar to other tasks, with HoldUp consistently providing better accuracy, outperforming baselines by up to 30% . HoldUp also provides lower cost compared with baselines that use LLMs. These results show that simple ways of directly us-ing LLMs for clustering, or combining them with embedding-based methods, lead to poor accuracy and high cost. Our approach uses LLMs judiciously, achieving better accuracy at lower cost. 
+
+## 6.3 Ablation Studies 
+
+We study two key design choices in HoldUp : how LLM annota-tions are obtained to compute edge weights, and how clusters are assigned to classes and scores. We use a subset of representative datasets in this sections—results on other datasets were similar. 
+
+Computing Edge Weights. We study the importance of our approach for obtaining edge weights in our clustering algorithm (Alg. 2)—recall that we iteratively obtain edge weights by querying an LLM on subsets of the dataset to obtain record pairs that belong to the same class and take their transitive closure (lines 1-3 in Alg. 3). We compare this approach with the following methods. We only modify how edge weights are computed, keeping the rest of the correlation clustering algorithm the same. HoldUp minus transitivity is the same as HoldUp but does not include transitive closure. HoldUp with cluster labels modifies how the LLM is queried: In Alg. 3, it asks the LLM to output a clustering of the input data, 𝑆 𝑖 
+
+(instead of asking it to output pairs that belong to the same class), then generates the positive annotation set ¯𝑃 𝑖 as the pairs that belong to the same output cluster (edge weight computation based on ¯𝑃 𝑖 is kept the same). HoldUp with pairwise labels performs a single LLM call for every pair of records, asking whether they belong to the same class without additional data context, assigning the binary LLM output as the pair’s edge weight. Table 3 shows how accuracy and cost change based on edge weights. All ablations perform worse than HoldUp , justifying our approach for computing edge weights. Surprisingly, we see that asking an LLM to output a clustering of the records (i.e., HoldUp 
+
+> 11
+
+Table 4: Comparison of cluster assignment algorithms                                          
+
+> (a) Classification
+> Method AgNews BiorxivS2S ArxivS2S Independent Assignment 0.97 0.81 0.55 Assignment with Examples 0.97 0.78 0.51 Majority Assignment 0.97 0.59 0.48
+> HoldUp (Bipartite matching) 0.97 0.81 0.75
+> (b) Scoring
+> Method Yelp Sentiment Ticket Support
+> AAscr AAscr AAscr
+> Independent Assignment 0.50 0.62 0.87 0.92 0.29 0.25 Bipartite Matching 0.78 0.77 0.55 0.41 0.26 0.25
+> HoldUp (ILP) 0.78 0.77 0.87 0.92 0.42 0.53
+
+with cluster labels) yields much worse accuracy—we suspect be-cause LLMs are not good at directly clustering a large set of input data due to long context issues. Using pairwise labels (i.e., HoldUp 
+
+with pairwise labels) also yields worse accuracy and higher cost, as labels are not created with a holistic data understand. Finally, the results also justify the use of transitive closure. 
+
+Cluster Assignment Algorithm . We next discuss the choice of cluster assignment algorithm for classification and scoring. Recall that our classification method uses bipartite matching to assign classes to clusters (Alg. 4). We compare this choice against three alternatives: Independent Assignment , which asks an LLM to independently assign each cluster to a class based on the cluster’s content alone; Assignment with Examples , which additionally pro-vides example records from other clusters; and Majority Assignment ,which classifies each record within a cluster independently and assigns the cluster to the majority prediction. Table 4a shows that HoldUp , which uses bipartite matching, outperforms other alternatives. The benefits are dataset dependent. For AgNews which has few classes, all methods perform well. On BiorxivS2S majority assignment performs poorly, but others remain competitive. Finally, on ArxivS2S, only bipartite matching achieves high accuracy. Indeed, ArxivS2S contains many similar classes, causing methods that independently assign each cluster to make mistakes; bipartite matching avoids this by jointly considering all clusters and classes simultaneously. Next, we compare our ILP-based cluster assignment (i.e., Alg. 7) for scoring to other alternatives, specifically, using Independent Assignment method, discussed above, as well as Bipartite Matching ,which uses the same algorithm for classification (Alg. 3.2) also for scoring. Table 4b shows the result of this comparison, we see that the ILP based method performs best across dataset. 
+
+## 7 RELATED WORK 
+
+Semantic Data Processing . A large body of recent work has focus on enabling processing unstructured data based on its semantics. These work broadly fall into two categories: (1) work that develop systems and optimizations for general purpose semantic data pro-cessing, such as [ 26 , 35 , 36 , 44 , 47 , 51 , 60 , 61 , 65 , 71 ] and (2) work that focus on optimizations for specific operations or tasks within semantic data processing, such as [ 3 , 27 , 34 , 52 , 69 , 72 , 74 ]. Unlike 
+
+HoldUp , none of these work considers data context to improve ac-curacy when performing operations, all performing map, filter and joins independently for each record, thus yielding poor accuracy for tasks when holistic data understanding is needed. We next discuss existing optimizations for classification, scoring and clustering. 
+
+Classification and Scoring . Before LLMs, a large body of work in NLP had focused on text classification and scoring, e.g., see [ 30 ,31 , 77 ]. Recent work has leveraged LLMs for text classification [ 26 ,36 , 44 , 51 , 55 ], processing each row independently with an LLM. Most recent work focuses on cost optimizations for classification, e.g., using model cascade [ 44 , 73 ], or its generalization, task cas-cade [ 52 ], as well as other architectures that take advantage of cheaper model [ 24 , 27 ] to reduce cost. DocETL [ 51 , 65 ] uses query rewriting to improve accuracy, but still performs the operations independently for each row. As our experiments show, HoldUp 
+
+outperforms Row-by-Row processing. 
+
+Clustering . Text clustering is also a traditional NLP tasks, with many solutions using clustering algorithm on text embeddings [ 46 ,68 ]. More recent work has combined such embedding-based ap-proaches with LLMs, with [ 44 , 63 ] using LLMs to modify input text that is embedded, and [ 11 , 45 , 63 ] using LLMs to guide internals of embedding-based clustering algorithms. Another line of work has focused on LLM-only solutions [ 23 , 25 ], treating clustering as a classification task by first asking an LLM to generate descriptions of potential clusters and then assigning records to clusters based on which description they match. HoldUp only uses LLMs, but unlike prior methods, uses a novel graph clustering approach to cluster records, which includes a novel bagging-like approach to obtain feedback from LLMs to decide the probability that two records belong to the same cluster. Our extensive experiments show that 
+
+HoldUp outperforms existing clustering approaches that use LLMs or embedding models. 
+
+Crowdsourcing. Many ideas in this paper are inspired by crowd-sourcing literature. The observation that data and human context in-fluences judgments has been used in crowdsourcing [ 40 , 48 , 79 , 80 ]although, unlike our work, these papers aim at reducing such con-textual effects when obtaining judgments from humans. Our cluster assignment method for scoring combines pairwise rankings to ob-tain an ordering of the clusters, a problem that has been studied in crowdsourcing [ 12 , 17 , 76 ], with our objective similar to that of Kemeny ranking [ 8 , 29 ]. More broadly, designing budget-aware schemes to obtain accurate labels for data processing is reminiscent of crowdsourcing work [ 9, 15 , 28 , 39 , 43 , 53 , 66 ]. However, LLMs differ substantially from human annotators in when they provide accurate labels, how those labels can be leveraged for classification, scoring, and clustering, and what cost–accuracy trade-offs they offer [ 43 ]. These differences necessitate our novel algorithms for querying LLMs and using their responses to perform these tasks. 
+
+## 8 CONCLUSION 
+
+In this paper, we presented HoldUp , a method for semantic data processing with holistic data understanding. We identified a key limitation of existing semantic operators: by processing records independently, they rely solely on the LLM’s dataset-agnostic inter-pretation of the task, often leading to inaccurate results. HoldUp 
+
+instead collectively processes records and leverages cross-record relationships to ground task interpretation in the data context. Us-ing this insight, we introduced novel clustering, classification and scoring algorithms that process records accurately and at low cost while holistically considering cross-record relationships. Evaluation on 15 real-world datasets demonstrates consistent improvements over existing approaches, with accuracy gains of up to 33% for classification and 30% for scoring and clustering tasks. 
+
+> 12
+
+## REFERENCES 
+
+[1] Eladjelet Abdelmalek. 2025. Sentiment Analysis Dataset. https://doi.org/10. 34740/KAGGLE/DSV/11666175 [2] Rami Aly, Steffen Remus, and Chris Biemann. 2019. Hierarchical multi-label classification of text with capsule networks. In Proceedings of the 57th annual meeting of the association for computational linguistics: student research workshop .323–330. [3] Simran Arora, Brandon Yang, Sabri Eyuboglu, Avanika Narayan, Andrew Hojel, Immanuel Trummer, and Christopher Ré. 2023. Language models enable simple systems for generating structured views of heterogeneous data lakes. arXiv preprint arXiv:2304.09433 (2023). [4] Yushi Bai, Shangqing Tu, Jiajie Zhang, Hao Peng, Xiaozhi Wang, Xin Lv, Shulin Cao, Jiazheng Xu, Lei Hou, Yuxiao Dong, et al . 2025. Longbench v2: Towards deeper understanding and reasoning on realistic long-context multitasks. In 
+
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . 3639–3664. [5] Nikhil Bansal, Avrim Blum, and Shuchi Chawla. 2004. Correlation clustering. 
+
+Machine learning 56, 1 (2004), 89–113. [6] Lawrence W Barsalou. 1987. The Instability of Graded Structure: Implications for the. Concepts and conceptual development: Ecological and intellectual factors in categorization 1 (1987), 101. [7] Leo Breiman. 1996. Bagging predictors. Machine learning 24, 2 (1996), 123–140. [8] Vincent Conitzer, Andrew Davenport, and Jayant Kalagnanam. 2006. Improved bounds for computing Kemeny rankings. In AAAI , Vol. 6. 620–626. [9] Susan B Davidson, Sanjeev Khanna, Tova Milo, and Sudeepa Roy. 2013. Using the crowd for top-k and group-by queries. In Proceedings of the 16th international conference on database theory . 225–236. [10] Dorottya Demszky, Dana Movshovitz-Attias, Jeongwoo Ko, Alan S. Cowen, Gaurav Nemade, and Sujith Ravi. 2020. GoEmotions: A Dataset of Fine-Grained Emotions. CoRR abs/2005.00547 (2020). arXiv:2005.00547 https://arxiv.org/abs/ 2005.00547 [11] Jairo Diaz-Rodriguez. 2026. Summaries as Centroids for Interpretable and Scal-able Text Clustering. In The Fourteenth International Conference on Learning Representations . https://openreview.net/forum?id=Uzku7RZXvI [12] Eyal Dushkin and Tova Milo. 2018. Top-k sorting under partial order information. In Proceedings of the 2018 International Conference on Management of Data . 1007– 1019. [13] Till Döhmen. 2024. Introducing the prompt() Function: Use the Power of LLMs with SQL! https://motherduck.com/blog/sql-llm-prompt-function-gpt-models/. Accessed: 2025-06-22. [14] Aristides Gionis, Heikki Mannila, and Panayiotis Tsaparas. 2007. Clustering aggregation. ACM Trans. Knowl. Discov. Data 1, 1 (March 2007), 4–es. https: //doi.org/10.1145/1217299.1217303 [15] Ryan Gomes, Peter Welinder, Andreas Krause, and Pietro Perona. 2011. Crowd-clustering. Advances in neural information processing systems 24 (2011). [16] Google. 2025. Perform intelligent SQL queries using AlloyDB AI query en-gine. http://cloud.google.com/alloydb/docs/ai/evaluate-semantic-queries-ai-operators. [17] Stephen Guo, Aditya Parameswaran, and Hector Garcia-Molina. 2012. So who won? Dynamic max discovery with the crowd. In Proceedings of the 2012 ACM SIGMOD international conference on management of data . 385–396. [18] Xifeng Guo, Long Gao, Xinwang Liu, and Jianping Yin. 2017. Improved deep embedded clustering with local structure preservation.. In Ijcai , Vol. 17. 1753– 1759. [19] Amir Hadifar, Lucas Sterckx, Thomas Demeester, and Chris Develder. 2019. A self-training approach for short text clustering. In Proceedings of the 4th Workshop on Representation Learning for NLP (RepL4NLP-2019) . 194–199. [20] Ben Hamner, Jaison Morgan, lynnvandev, Mark Shermis, and Tom Vander Ark. 2012. The Hewlett Foundation: Automated Essay Scoring. https://kaggle.com/ competitions/asap-aes. Kaggle Competition. [21] James A Hampton, Danièle Dubois, and Wenchi Yeh. 2006. Effects of classification context on categorization in natural categories. Memory & Cognition 34, 7 (2006), 1431–1443. [22] Wassily Hoeffding. 1994. Probability inequalities for sums of bounded random variables. The collected works of Wassily Hoeffding (1994), 409–426. [23] Chen Huang and Guoxiu He. 2025. Text clustering as classification with llms. In 
+
+Proceedings of the 2025 Annual International ACM SIGIR Conference on Research and Development in Information Retrieval in the Asia Pacific Region . 374–384. [24] Keke Huang, Yimin Shi, Dujian Ding, Yifei Li, Yang Fei, Laks Lakshmanan, and Xiaokui Xiao. 2025. ThriftLLM: On Cost-Effective Selection of Large Language Models for Classification Queries. arXiv preprint arXiv:2501.04901 (2025). [25] Hwiyeol Jo, Hyunwoo Lee, Kang Min Yoo, and Taiwoo Park. 2025. ZeroDL: Zero-shot Distribution Learning for Text Clustering via Large Language Models. In Findings of the Association for Computational Linguistics: ACL 2025 , Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar (Eds.). Association for Computational Linguistics, Vienna, Austria, 19597–19607. https: //doi.org/10.18653/v1/2025.findings-acl.1005 [26] Saehan Jo and Immanuel Trummer. 2024. Thalamusdb: Approximate query processing on multi-modal data. Proceedings of the ACM on Management of Data 
+
+2, 3 (2024), 1–26. [27] Saehan Jo and Immanuel Trummer. 2025. SpareLLM: Automatically Selecting Task-Specific Minimum-Cost Large Language Models under Equivalence Con-straint. Proceedings of the ACM on Management of Data 3, 3 (2025), 1–26. [28] David R Karger, Sewoong Oh, and Devavrat Shah. 2014. Budget-optimal task allocation for reliable crowdsourcing systems. Operations Research 62, 1 (2014), 1–24. [29] John G Kemeny. 1959. Mathematics without numbers. Daedalus 88, 4 (1959), 577–591. [30] Yoon Kim. 2014. Convolutional neural networks for sentence classification. In Proceedings of the 2014 conference on empirical methods in natural language processing (EMNLP) . 1746–1751. [31] Kamran Kowsari, Kiana Jafari Meimandi, Mojtaba Heidarysafa, Sanjana Mendu, Laura Barnes, and Donald Brown. 2019. Text classification algorithms: A survey. 
+
+Information 10, 4 (2019), 150. [32] Harold W Kuhn. 1955. The Hungarian method for the assignment problem. 
+
+Naval research logistics quarterly 2, 1-2 (1955), 83–97. [33] Stefan Larson, Anish Mahendran, Joseph J. Peper, Christopher Clarke, Andrew Lee, Parker Hill, Jonathan K. Kummerfeld, Kevin Leach, Michael A. Lauren-zano, Lingjia Tang, and Jason Mars. 2019. An Evaluation Dataset for Intent Classification and Out-of-Scope Prediction. In Proceedings of the 2019 Con-ference on Empirical Methods in Natural Language Processing and the 9th In-ternational Joint Conference on Natural Language Processing (EMNLP-IJCNLP) .https://www.aclweb.org/anthology/D19-1131 [34] Yiming Lin, Mawil Hasan, Rohan Kosalge, Alvin Cheung, and Aditya G Parameswaran. 2025. Twix: Automatically reconstructing structured data from templatized documents. arXiv preprint arXiv:2501.06659 (2025). [35] Yiming Lin, Madelon Hulsebos, Ruiying Ma, Shreya Shankar, Sepanta Zeigham, Aditya G Parameswaran, and Eugene Wu. 2024. Towards accurate and efficient document analytics with large language models. arXiv preprint arXiv:2405.04674 
+
+(2024). [36] Chunwei Liu, Matthew Russo, Michael Cafarella, Lei Cao, Peter Baille Chen, Zui Chen, Michael Franklin, Tim Kraska, Samuel Madden, and Gerardo Vitagliano. 2024. A declarative system for optimizing ai workloads. arXiv preprint arXiv:2405.14696 (2024). [37] Nelson F Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024. Lost in the middle: How language models use long contexts. Transactions of the Association for Computational Linguistics 
+
+12 (2024), 157–173. [38] Yinhong Liu, Han Zhou, Zhijiang Guo, Ehsan Shareghi, Ivan Vulić, Anna Ko-rhonen, and Nigel Collier. 2024. Aligning with human judgement: The role of pairwise preference in large language model evaluators. arXiv preprint arXiv:2403.16950 (2024). [39] Adam Marcus, Eugene Wu, David Karger, Samuel Madden, and Robert Miller. 2011. Human-powered sorts and joins. arXiv preprint arXiv:1109.6881 (2011). [40] Michael C Mozer, Harold Pashler, Matthew Wilder, Robert V Lindsey, Matt C Jones, and Michael N Jones. 2010. Decontaminating human judgments by re-moving sequential dependencies. In Advances in Neural Information Processing Systems 23 (2010). [41] Michael C Mozer, Michael Shettel, and Michael Holmes. 2006. Context effects in category learning: An investigation of four probabilistic models. Advances in Neural Information Processing Systems 19 (2006). [42] Niklas Muennighoff, Nouamane Tazi, Loïc Magne, and Nils Reimers. 2023. MTEB: Massive Text Embedding Benchmark. arXiv:2210.07316 [cs.CL] https://arxiv. org/abs/2210.07316 [43] Aditya G Parameswaran, Shreya Shankar, Parth Asawa, Naman Jain, and Yujie Wang. 2023. Revisiting prompt engineering via declarative crowdsourcing. arXiv preprint arXiv:2308.03854 (2023). [44] Liana Patel, Siddharth Jha, Carlos Guestrin, and Matei Zaharia. 2024. Lotus: Enabling semantic queries with llms over tables of unstructured and structured data. arXiv preprint arXiv:2407.11418 (2024). [45] Anup Pattnaik, Cijo George, Rishabh Kumar Tripathi, Sasanka Vutla, and Jithen-dra Vepa. 2024. Improving Hierarchical Text Clustering with LLM-guided Multi-view Cluster Representation. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing: Industry Track , Franck Dernoncourt, Daniel Preoţiuc-Pietro, and Anastasia Shimorina (Eds.). Association for Compu-tational Linguistics, Miami, Florida, US, 719–727. https://doi.org/10.18653/v1/ 2024.emnlp-industry.54 [46] Nils Reimers and Iryna Gurevych. 2019. Sentence-bert: Sentence embeddings using siamese bert-networks. In Proceedings of the 2019 conference on empirical methods in natural language processing and the 9th international joint conference on natural language processing (EMNLP-IJCNLP) . 3982–3992. [47] Matthew Russo, Chunwei Liu, Sivaprasad Sudhir, Gerardo Vitagliano, Michael Ca-farella, Tim Kraska, and Samuel Madden. 2025. Abacus: A Cost-Based Optimizer for Semantic Operator Systems. arXiv preprint arXiv:2505.14661 (2025). [48] Falk Scholer, Diane Kelly, Wan-Ching Wu, Hanseul S Lee, and William Webber. 2013. The effect of threshold priming and need for cognition on relevance                           
+
+> 13 50 100 200 300 400 500
+> B
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Accuracy
+> (a) AgNews
+> 50 100 200 300 400 500
+> B
+> (b) BiorxivS2S
+> 50 100 200 300 400 500
+> B
+> (c) Clinc (D)
+> 50 100 200 300 400 500
+> B
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> (d) DBPedia
+> 50 100 200 300 400 500
+> B
+> (e) ArxivS2S
+> 50 100 200 300 400 500
+> B
+> (f) MedrxivS2S
+> |Si| = 40 |Si| = 80 |Si| = 160
+
+Figure 11: Effect of 𝑚 and |𝑆 𝑖 |.
+
+calibration and assessment. In Proceedings of the 36th international ACM SIGIR conference on Research and development in information retrieval . 623–632. [49] Norbert Schwarz. 1999. Self-reports: How the questions shape the answers. 
+
+American psychologist 54, 2 (1999), 93. [50] Norbert Schwarz and Seymour Sudman. 2012. Context effects in social and psychological research . Springer Science & Business Media. [51] Shreya Shankar, Tristan Chambers, Tarak Shah, Aditya G Parameswaran, and Eugene Wu. 2024. DocETL: Agentic Query Rewriting and Evaluation for Complex Document Processing. arXiv preprint arXiv:2410.12189 (2024). [52] Shreya Shankar, Sepanta Zeighami, and Aditya Parameswaran. 2026. Task Cas-cades for Efficient Unstructured Data Processing. arXiv preprint arXiv:2601.05536 
+
+(2026). [53] Victor S Sheng, Foster Provost, and Panagiotis G Ipeirotis. 2008. Get another label? improving data quality and data mining using multiple, noisy labelers. In Proceedings of the 14th ACM SIGKDD international conference on Knowledge discovery and data mining . 614–622. [54] Snoflake. 2025. Introducing Cortex AISQL: Reimagining SQL into AI Query Language for Multimodal Data. https://www.snowflake.com/en/blog/ai-sql-query-language/. [55] Xiaofei Sun, Xiaoya Li, Jiwei Li, Fei Wu, Shangwei Guo, Tianwei Zhang, and Guoyin Wang. 2023. Text Classification via Large Language Models. In Findings of the Association for Computational Linguistics: EMNLP 2023 , Houda Bouamor, Juan Pino, and Kalika Bali (Eds.). Association for Computational Linguistics, Singapore, 8990–9005. https://doi.org/10.18653/v1/2023.findings-emnlp.603 [56] Youran Sun, Sepanta Zeighami, Bhavya Chopra, Shreya Shankar, and Aditya Parameswaran. 2026. Semantic Data Processing with Holistic Data Understand-ing (Code). https://github.com/YouranSun/HOLDUP. [57] suraj520. 2023. Customer Support Ticket Dataset. https://www.kaggle.com/ datasets/suraj520/customer-support-ticket-dataset. Kaggle Dataset. [58] Richard H Thaler and Cass R Sunstein. 2009. Nudge: Improving decisions about health, wealth, and happiness . Penguin. [59] Roger Tourangeau, Lance J Rips, and Kenneth Rasinski. 2000. The psychology of survey response. (2000). [60] Matthias Urban and Carsten Binnig. 2024. Demonstrating CAESURA: Language Models as Multi-Modal Query Planners. In Companion of the 2024 International Conference on Management of Data . 472–475. [61] Matthias Urban and Carsten Binnig. 2024. ELEET: Efficient Learned Query Execution over Text and Tables. Proc. VLDB Endow 17 (2024), 13. [62] Vijay Viswanathan, Kiril Gashteovski, Carolin Lawrence, Tongshuang Wu, and Graham Neubig. 2024. Large Language Models Enable Few-Shot Clustering. 
+
+Transactions of the Association for Computational Linguistics 12 (2024), 321–333. https://doi.org/10.1162/tacl_a_00648 [63] Vijay Viswanathan, Kiril Gashteovski, Carolin Lawrence, Tongshuang Wu, and Graham Neubig. 2024. Large Language Models Enable Few-Shot Clustering. 
+
+Transactions of the Association for Computational Linguistics 12 (2024), 321–333. https://doi.org/10.1162/tacl_a_00648 [64] Xindi Wang, Mahsa Salmani, Parsa Omidi, Xiangyu Ren, Mehdi Rezagholizadeh, and Armaghan Eshaghi. 2024. Beyond the limits: A survey of techniques to extend the context length in large language models. arXiv preprint arXiv:2402.02244 
+
+(2024). [65] Lindsey Linxi Wei, Shreya Shankar, Sepanta Zeighami, Yeounoh Chung, Fatma Ozcan, and Aditya G Parameswaran. 2025. Multi-Objective Agentic Rewrites for Unstructured Data Processing. arXiv preprint arXiv:2512.02289 (2025). [66] Peter Welinder and Pietro Perona. 2010. Online crowdsourcing: rating annotators and obtaining cost-effective labels. In 2010 IEEE Computer Society Conference on Computer Vision and Pattern Recognition-Workshops . IEEE, 25–32. [67] Patrick Wendell, Eric Peter, Nicolas Pelaez, Jianwei Xie, Vinny Vi-jeyakumaar, Linhong Liu, and Shitao Li. 2023. Introducing AI Func-tions: Integrating Large Language Models with Databricks SQL. https://www.databricks.com/blog/2023/04/18/introducing-ai-functions-integrating-large-language-models-databricks-sql.html. Accessed: 2025-06-22. [68] Junyuan Xie, Ross Girshick, and Ali Farhadi. 2016. Unsupervised deep embedding for clustering analysis. In International conference on machine learning . PMLR, 478–487. [69] Bangrui Xu, Qihang Yao, Zirui Tang, Xuanhe Zhou, Yeye He, Shihan Yu, Qianqian Xu, Bin Wang, Guoliang Li, Conghui He, et al . 2026. MoDora: Tree-Based Semi-Structured Document Analysis System. arXiv preprint arXiv:2602.23061 (2026). [70] Jiaming Xu, Bo Xu, Peng Wang, Suncong Zheng, Guanhua Tian, and Jun Zhao. 2017. Self-taught convolutional neural networks for short text clustering. Neural Networks 88 (2017), 22–31. [71] Sepanta Zeighami, Yiming Lin, Shreya Shankar, and Aditya Parameswaran. 2025. LLM-Powered Proactive Data Systems. arXiv preprint arXiv:2502.13016 (2025). [72] Sepanta Zeighami, Shreya Shankar, and Aditya Parameswaran. 2025. Featurized-Decomposition Join: Low-Cost Semantic Joins with Guarantees. arXiv preprint arXiv:2512.05399 (2025). [73] Sepanta Zeighami, Shreya Shankar, and Aditya Parameswaran. 2026. Cut Costs, Not Accuracy: LLM-Powered Data Processing with Guarantees. SIGMOD’26 
+
+(2026). To appear. [74] Sepanta Zeighami, Zac Wellmer, and Aditya Parameswaran. 2024. Nudge: Light-weight non-parametric fine-tuning of embeddings for retrieval. arXiv preprint arXiv:2409.02343 (2024). [75] Dejiao Zhang, Feng Nan, Xiaokai Wei, Shang-Wen Li, Henghui Zhu, Kathleen McKeown, Ramesh Nallapati, Andrew O Arnold, and Bing Xiang. 2021. Support-ing clustering with contrastive learning. In Proceedings of the 2021 conference of the North American chapter of the association for computational linguistics: Human language technologies . 5419–5430. [76] Xiaohang Zhang, Guoliang Li, and Jianhua Feng. 2016. Crowdsourced Top-k Algorithms: An Experimental Evaluation. Proc. VLDB Endow. 9, 8 (2016), 612–623. [77] Xiang Zhang, Junbo Zhao, and Yann LeCun. 2015. Character-level convolutional networks for text classification. In Proceedings of the 29th International Conference on Neural Information Processing Systems - Volume 1 (Montreal, Canada) (NIPS’15) .MIT Press, Cambridge, MA, USA, 649–657. [78] Xiaojin Zhu, Timothy Rogers, Ruichen Qian, and Chuck Kalish. 2007. Humans perform semi-supervised classification too. In AAAI , Vol. 2007. 864–870. [79] Honglei Zhuang, Aditya Parameswaran, Dan Roth, and Jiawei Han. 2015. Debias-ing crowdsourced batches. In Proceedings of the 21th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining . 1593–1602. [80] Honglei Zhuang and Joel Young. 2015. Leveraging in-batch annotation bias for crowdsourced active learning. In Proceedings of the Eighth ACM International Conference on Web Search and Data Mining . 243–252. 
+
+## A OVERVIEW 
+
+This appendix is organized as follows. 
+
+• Appx. B presents additional details. 
+
+• Appx. C provides our ILP formulation for clustering assign-ment during scoring. 
+
+• Appx. D presents proofs of our theoretical statements. 
+
+## B ADDITIONAL EXPERIMENTS AND DETAILS B.1 Additional Dataset Details 
+
+For the ground-truth labels columns across datasets, we use the ‘domain’ column for the Clinic dataset, Massive and Mtop dataset, ‘d1’ hierarchy level for Blurb, and ‘primary category’ for ArxivS2S, BiorxivS2S, and MedrxivS2S datasets. Prompts used for all datasets is available in our code base [56]. 
+
+## B.2 Sensitivity to Parameters 
+
+We evaluate the effect of 𝐵 and |𝑆 𝑖 | jointly across the six datasets, where 𝐵 is the number of records clustered each time (i.e., size of input to clustering algorithm 3.1) and 𝑆 𝑖 is size of the sample set passed to the LLM to obtain labels from (i.e., in line 2 of Alg. 3). We let 𝑚 max = 2, 000 which caps the total number of samples taken (i.e., in line 2 of Alg. 2). Figure 11 demonstrates how clustering                                    
+
+> 14 Method AgNews BiorxivS2S Clinc Acc Cost Acc Cost Acc Cost
+> HoldUp with clustering labels 0.26 0.33 0.10 0.05 0.19 0.31
+> HoldUp with pairwise labels 0.72 39.83 0.14 40.29 0.30 29.37
+> HoldUp minus transitive closure 0.85 1.76 0.73 0.14 0.87 0.22
+> HoldUp 0.97 1.97 0.83 0.32 0.87 1.68
+
+(a) Clustering 
+
+accuracy changes based on 𝐵 and |𝑆 𝑖 |. |𝑆 𝑖 | = 80 in general achieves the highest accuracy compared to |𝑆 𝑖 | = 40 and |𝑆 𝑖 | = 160 , although 
+
+|𝑆 𝑖 | = 80 and |𝑆 𝑖 | = 160 are comparable in many datasets. Regarding 
+
+𝐵 , we see that accuracy generally increases as 𝐵 increases, except for |𝑆 𝑖 | = 40 . For |𝑆 𝑖 | = 40 , the accuracy is in general lower and decreases as 𝐵 increases. This is due to two factors. First, a small |𝑆 𝑖 |
+
+means each LLM call provides fewer annotations, so that more LLM calls would be necessary to obtain enough annotations (number of LLM calls are currently capped at 80). Second, |𝑆 𝑖 | might not be insufficient to provide data context, especially for datasets with many clusters (e.g., if the number of clusters is more than 40). 
+
+|𝑆 𝑖 | = 160 often performs slightly worse that |𝑆 𝑖 | = 80 , we suspect because the longer context causes more LLM error. 
+
+## B.3 Ablation of Edge Weights for Clustering 
+
+We present an ablation study analogous to Sec. 6.3, where we eval-uate impact of ablations of HoldUp on clustering accuracy. The baselines we consider here are as discussed in Sec. 6.3. The results are shown in Table 5a where we see trends similar to Sec. 6.3. 
+
+## C ILP DETAILS FOR SCORING 
+
+We formulate an ILP to assign each cluster a unique score to mini-mize the total violations of LLM’s pairwise comparisons. We define 
+
+𝑎 𝑖,𝑗 ∈ { 0, 1} to be an indicator variable denoting whether group 
+
+ˆ𝐶 𝑖 is assigned to score 𝑗 . We define 𝑏 𝑖,𝑗 ∈ { 0, 1} to be an indicator variable denoting 𝐶 𝑖 is assigned a higher score than ˆ𝐶 𝑗 . That is, 
+
+𝑏 𝑖,𝑗 = I[𝜋 ( ˆ𝐶 𝑖 ) > 𝜋 ( ˆ𝐶 𝑗 )] . Finally, we build the objective and the constraints as follows: 
+
+min Í1≤𝑖 <𝑗 ≤𝑘 
+
+
+
+𝑏 𝑖,𝑗 · 𝑊 ( ˆ𝐶 𝑖 , ˆ𝐶 𝑗 ) + ( 1 − 𝑏 𝑖,𝑗 ) · 𝑊 ( ˆ𝐶 𝑗 , ˆ𝐶 𝑖 )
+
+
+
+s.t. Í𝑘 𝑠 =1 𝑎 𝑖,𝑠 = 1 ∀𝑖 = 1 . . . , 𝑘 (score uniqueness) 
+
+Í𝑘 𝑖 =1 𝑎 𝑖,𝑠 = 1 ∀𝑠 = 1, . . . , 𝑘 (score distinctness) 
+
+𝜋 ( ˆ𝐶 𝑖 ) = Í𝑘 𝑠 =1 𝑠 · 𝑎 𝑖,𝑠 ∀𝑖 (score assignment) 
+
+𝑏 𝑖,𝑗 = I[𝜋 ( ˆ𝐶 𝑖 ) > 𝜋 ( ˆ𝐶 𝑗 )] ∀𝑖 < 𝑗 (pairwise relationship) 
+
+𝑎 𝑖,𝑠 ∈ { 0, 1} ∀𝑖, 𝑠 
+
+Note that 𝑏 𝑖,𝑗 = I[𝜋 ( ˆ𝐶 𝑖 ) > 𝜋 ( ˆ𝐶 𝑗 )] can be implemented in an ILP with a big-M constraint. By solving the ILP problem, we obtain an optimal scoring of the clusters that minimizes the violation of pairwise comparison results. 
+
+## D PROOFS D.1 Proof of Lemma 3.1 
+
+We use a simplified statistical model of the sampling procedure. We first discuss necessary notation, then define our statistical model and its assumption before deriving Lemma 3.1. Let 𝐸 𝑎,𝑏 𝑧 be a Bernoulli random variable denoting the sampling outcome when the edge between 𝑡 𝑎 and 𝑡 𝑏 is sampled, so that 
+
+𝑊 [𝑎, 𝑏 ] = 1
+
+> 𝑟
+
+Í𝑧 ∈ [ 𝑟 ] 𝐸 𝑎,𝑏 𝑧 . Recall that 
+
+𝑑 (𝑎, 𝑗 ) =∑︁  
+
+> 𝑖𝑑 𝑏 =𝑗,
+> 𝑎 ≠𝑏
+
+𝑊 [𝑎, 𝑏 ] + ∑︁  
+
+> 𝑖𝑑 𝑏 ≠𝑗,
+> 𝑎 ≠𝑏
+
+(1 − 𝑊 [𝑎, 𝑏 ]) 
+
+so that 
+
+𝑑 (𝑎, 𝑗 ) = 1
+
+𝑟 ∑︁ 𝑖𝑑 𝑏 =𝑗, 
+
+> 𝑎 ≠𝑏
+
+∑︁ 𝑧 ∈ [ 𝑟 ]
+
+𝐸 𝑎,𝑏 𝑧 + 1
+
+𝑟 ∑︁ 𝑖𝑑 𝑏 ≠𝑗, 
+
+> 𝑎 ≠𝑏
+
+©«∑︁ 𝑧 ∈ [ 𝑟 ]
+
+(1 − 𝐸 𝑎,𝑏 𝑧 )ª®¬
+
+= 1
+
+𝑟 ∑︁ 𝑧 ∈ [ 𝑟 ]∑︁ 𝑖𝑑 𝑏 =𝑗, 
+
+> 𝑎 ≠𝑏
+
+𝐸 𝑎,𝑏 𝑧 + 1
+
+𝑟 ∑︁ 𝑧 ∈ [ 𝑟 ]∑︁ 𝑖𝑑 𝑏 ≠𝑗, 
+
+> 𝑎 ≠𝑏
+
+
+
+1 − 𝐸 𝑎,𝑏 𝑧 
+
+
+
+Now denote by 𝐷 𝑎,𝑗 𝑧 = Í𝑖𝑑 𝑏 =𝑗, 
+
+> 𝑎 ≠𝑏
+
+𝐸 𝑎,𝑏 𝑧 + Í𝑖𝑑 𝑏 ≠𝑗, 
+
+> 𝑎 ≠𝑏
+
+(1 − 𝐸 𝑎,𝑏 𝑧 ) for 𝑧 ∈ [ 𝑟 ].We use a statistical model with the following assumptions. First, we assume 𝐷 𝑎,𝑗  
+
+> 1
+
+, ..., 𝐷 𝑎,𝑗 𝑟 are i.i.d random variables with true mean 
+
+𝑑 ∗ (𝑎, 𝑗 ) and empirical mean 𝑑 (𝑎, 𝑗 ). Furthermore, we assume 𝐷 𝑎,𝑗 𝑧 
+
+are independently computed for each 𝑧 and 𝑗 so that all 𝐷 𝑎,𝑗 𝑧 are independent from each other. This assumption models a statistical process where new edge weights are independently sampled to estimate each 𝐷 𝑎,𝑗 𝑧 . We also make an assumption that 𝐷 𝑎,𝑗 𝑧 ≤ | ˆ𝐶 𝑗 |,that is, the disagreement for a record is bounded by the size of the cluster, which we expect to be true in practice. Based on these assumptions, then 
+
+P(𝑑 (𝑎, 𝑖 ) − 𝑑 ∗ (𝑎, 𝑖 ) ≥ 𝜖 𝑎 ,𝑖 ∈ [ 𝑘 ] \ { 𝑖𝑑 𝑎 }) 
+
+= Π𝑖 ∈ [ 𝑘 ]\{ 𝑖𝑑 𝑎 } P(| 𝑑 (𝑎, 𝑖 ) − 𝑑 ∗ (𝑎, 𝑖 )| ≥ 𝜖 𝑎 )≤ Π𝑖 ∈ [ 𝑘 ]\{ 𝑖𝑑 𝑎 } exp (2𝑟 𝜖 2
+
+> 𝑎
+
+|𝐶 𝑖 |2 )
+
+= exp (2𝑟 ∑︁    
+
+> 𝑖 ∈ [ 𝑘 ]\{ 𝑖𝑑 𝑎 }
+
+𝜖 2
+
+> 𝑎
+
+|𝐶 𝑖 |2 ).
+
+Similarly 
+
+P(𝑑 ∗ (𝑎, 𝑖𝑑 𝑎 ) − 𝑑 (𝑎, 𝑖𝑑 𝑎 ) ≥ 𝜖 𝑎 ) ≤ exp (2𝑟 𝜖 2
+
+> 𝑎
+
+|𝐶 𝑖𝑑 𝑎 |2 ).
+
+Thus, combining the above, 
+
+P(𝑑 (𝑎, 𝑖 ) − 𝑑 ∗ (𝑎, 𝑖 ) ≥ 𝜖 𝑎 , 𝑖 ∈ [ 𝑘 ] \ { 𝑖𝑑 𝑎 }, 𝑑 ∗ (𝑎, 𝑖𝑑 𝑎 ) − 𝑑 (𝑎, 𝑖𝑑 𝑎 ) ≥ 𝜖 𝑎 )≤ exp (2𝑟 ∑︁   
+
+> 𝑖 ∈ [ 𝑘 ]
+
+𝜖 2
+
+> 𝑎
+
+|𝐶 𝑖 |2 ).
+
+## D.2 Proof of Prop 4.1 
+
+The total cost is divide into cost of performing CbClassification 
+
+and row-by-row processing. We perform CbClassification on two subsets of D: the sample batch 𝐷 0 (lines 1-2, Alg. 1) and the subset 𝐷 𝑋 ⊆ D \ 𝐷 0 that are above the confidence threshold (lines 4-5, Alg. 1). We perform row-by-row classification on all records in D \ 𝐷 0 (line 3, Alg. 1). We next discuss the cost of row-by-row classification and CbClassification separately. 
+
+Row-by-row Classification . For row-by-row classification, each LLM call to the chosen proxy, M𝑃 contains a single record 𝑡 and 
+
+> 15
+
+all class names ℓ1, · · · , ℓ 𝑘 (Alg. 5, lines 9-10). Let 𝑐 𝑃 be the cost per token for proxy, M𝑃 . Then, cost of this step is 
+
+𝑐 𝑃 · |D \ 𝐷 0 | · ( 𝑙 𝑟 + 𝐿 ℓ ) = 𝑐 𝑃 · ( 𝑛 − 𝐵 ) · ( 𝑙 𝑟 + 𝐿 ℓ ) ≤ 𝑐 𝑃 · ( 𝐿 𝑟 + 𝑛 · 𝐿 ℓ ).
+
+CbClassification . This step consists of clustering records and cluster assignment, applied to 
+
+
+
+1 + ⌈ |𝐷 𝑋 | 
+
+> 𝐵
+
+⌉
+
+
+
+= 1+𝑛 𝐵 , batches, where 
+
+𝑛 𝐵 = ⌈ |𝐷 𝑋 | 
+
+> 𝐵
+
+⌉. Let the LLMs used in clustering records and cluster assignment be Mcluster , and Massign , with unit prices 𝑐 cluster , 𝑐 assign 
+
+respectively. For clustering, each call to Alg. 2 processes a batch, 𝐷 𝐵 . The cost for each call is due to 𝑚 LLM calls Mcluster (P, 𝑆 𝑖 ) on sampled subsets 𝑆 𝑖 ⊆ 𝐷 𝐵 , 𝑖 ∈ [ 𝑚 ] (Alg. 3, line 3), where 𝑚 is to total number of iterations (i.e., for loop in line 2 in Alg. 3). Each call includes |𝑆 𝑖 |
+
+records, resulting in a prompt length of |𝑆 𝑖 | · 𝑙 𝑟 . The total clustering cost is: 𝑐 cluster · 𝑚 · | 𝑆 𝑖 | · 𝑙 𝑟 .For cluster assignment (i.e., Alg. 4) on a batch 𝐷 𝐵 clustered into sets ˆ𝐶 1, ..., ˆ𝐶 𝑘 , the cost is due to 𝑘 LLM calls Massign (P, ˆ𝐶 𝑖 , ℓ ), one for each cluster ˆ𝐶 𝑖 , to evaluate its alignment with all 𝑘 class names (line 3). Each call includes | ˆ𝐶 𝑖 | records and all 𝑘 class names. The cost is: 
+
+𝑐 assignment ·
+
+> 𝑘
+
+∑︁ 
+
+> 𝑖 =1
+
+
+
+| ˆ𝐶 𝑖 | · 𝑙 𝑟 + 𝑘 · 𝑙 ℓ
+
+
+
+= 𝑐 assignment · ( 𝐵 · 𝑙 𝑟 + 𝑘 · 𝐿 ℓ )
+
+Total Cost. As CbClassification is applied to a total of (1 + 𝑛 𝐵 )
+
+batches on 𝐷 0 ∪ 𝐷 𝑋 , the total cost is at most: 
+
+𝜘 (𝑐 𝑃 (𝐿 𝑟 + 𝑛𝐿 ℓ ) + 𝑐 cluster · 𝑚 · 𝑟 · 𝐿 𝑟 + 𝑐 assignment · 𝑟 · ( 𝐿 𝑟 + 𝑛 · 𝑘 · 𝐿 ℓ )) 
+
+where 𝜘 is a constant. Rearenging gives the statment of the propo-sition.
