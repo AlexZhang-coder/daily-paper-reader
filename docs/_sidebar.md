@@ -1,6 +1,9 @@
 * <a class="dpr-sidebar-root-link" href="#/">首页</a>
 * <a class="dpr-sidebar-root-link dpr-sidebar-noactive-link" href="javascript:void(0)" data-dpr-hash="#/tutorial/README">使用教程</a>
 * Daily Papers
+  * 2026-04-12 <!--dpr-date:20260412-->
+    * 精读区
+      * <a class="dpr-sidebar-item-link dpr-sidebar-item-structured" href="#/202604/12/2604.06817v1-semeval-2026-task-9-detecting-multilingual-multicultural-and-multievent-online-polarization" data-sidebar-item="{&quot;title&quot;: &quot;SemEval-2026 Task 9: Detecting Multilingual, Multicultural and Multievent Online Polarization&quot;, &quot;link&quot;: &quot;https://arxiv.org/abs/2604.06817v1-semeval-2026-task-9-detecting-multilingual-multicultural-and-multievent-online-polarization&quot;, &quot;score&quot;: &quot;8.5&quot;, &quot;tags&quot;: [{&quot;kind&quot;: &quot;query&quot;, &quot;label&quot;: &quot;senta&quot;}], &quot;evidence&quot;: &quot;检测在线极化及其表现形式是情感和观点分析的一种形式。&quot;}">SemEval-2026 Task 9: Detecting Multilingual, Multicultural and Multievent Online Polarization</a>
   * 2026-04-11 <!--dpr-date:20260411-->
     * 速读区
       * <a class="dpr-sidebar-item-link dpr-sidebar-item-structured" href="#/202604/11/2604.06817v1-semeval-2026-task-9-detecting-multilingual-multicultural-and-multievent-online-polarization" data-sidebar-item="{&quot;title&quot;: &quot;SemEval-2026 Task 9: Detecting Multilingual, Multicultural and Multievent Online Polarization&quot;, &quot;link&quot;: &quot;https://arxiv.org/abs/2604.06817v1-semeval-2026-task-9-detecting-multilingual-multicultural-and-multievent-online-polarization&quot;, &quot;score&quot;: &quot;7.0&quot;, &quot;tags&quot;: [{&quot;kind&quot;: &quot;query&quot;, &quot;label&quot;: &quot;senta&quot;}], &quot;evidence&quot;: &quot;检测在线极化是情感和观点分析的一种形式，涉及立场分类。&quot;}">SemEval-2026 Task 9: Detecting Multilingual, Multicultural and Multievent Online Polarization</a>
