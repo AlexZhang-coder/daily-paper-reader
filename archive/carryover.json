@@ -1,10 +1,10 @@
 {
-  "generated_at": "2026-08-23T19:09:30.069161+00:00",
-  "updated_date": "20260823",
+  "generated_at": "2026-08-24T19:44:15.657849+00:00",
+  "updated_date": "20260824",
   "carryover_days": 9,
   "tag_states": {
     "SentA": {
-      "updated_date": "20260823",
+      "updated_date": "20260824",
       "carryover_days": 9,
       "items": []
     }
